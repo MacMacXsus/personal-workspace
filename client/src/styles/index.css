@@ -1,6 +1,8 @@
 @import "tailwindcss";
+@import './fonts.css';
+@import './theme.css';
 
-*,
+/* *,
 *::before,
 *::after {
   box-sizing: border-box;
@@ -29,4 +31,4 @@ input,
 textarea,
 select {
   font: inherit;
-}
+} */
