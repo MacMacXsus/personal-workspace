@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowRight,
@@ -10,6 +10,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import heroImage from "../assets/hero.png";
+import { fetchCurrentUser, startGoogleAuth } from "../lib/auth";
 
 const trustPoints = [
   "Encrypted sessions and secure device checks",
@@ -20,6 +21,24 @@ const trustPoints = [
 function LoginPage() {
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    let isActive = true;
+
+    fetchCurrentUser()
+      .then(() => {
+        if (isActive) {
+          navigate("/dashboard", { replace: true });
+        }
+      })
+      .catch(() => {
+        // Not signed in yet.
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [navigate]);
 
   return (
     <div className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(139,124,248,0.18),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(94,207,176,0.12),_transparent_24%),linear-gradient(180deg,_#0c0c11_0%,_#09090d_100%)] text-foreground">
@@ -46,7 +65,8 @@ function LoginPage() {
                 Log in to continue.
               </h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Use your email and password to get back into the workspace.
+                Google OAuth is the live sign-in path. We can wire email and
+                password later if we need it.
               </p>
             </div>
 
@@ -54,7 +74,7 @@ function LoginPage() {
               className="space-y-5"
               onSubmit={(event) => {
                 event.preventDefault();
-                navigate("/dashboard");
+                startGoogleAuth();
               }}
             >
               <div className="space-y-2">
@@ -131,7 +151,12 @@ function LoginPage() {
                 type="submit"
                 className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_18px_40px_rgba(139,124,248,0.25)]"
               >
-                Continue to workspace
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[conic-gradient(from_180deg,#4285F4_0deg,#4285F4_90deg,#34A853_90deg,#34A853_180deg,#FBBC05_180deg,#FBBC05_270deg,#EA4335_270deg,#EA4335_360deg)] p-[2px] text-[10px] font-semibold text-foreground">
+                  <span className="flex h-full w-full items-center justify-center rounded-full bg-background">
+                    G
+                  </span>
+                </span>
+                Continue with Google
                 <ArrowRight className="h-4 w-4" />
               </button>
 
@@ -180,7 +205,7 @@ function LoginPage() {
 
             <p className="mt-4 max-w-lg text-base leading-7 text-muted-foreground">
               Jump back into your tasks, notes, and calendar from one clean
-              place. This login UI is ready for backend auth later.
+              place. The Google OAuth flow is wired to the backend now.
             </p>
 
             <div className="mt-10 grid gap-4 justify-items-center sm:grid-cols-3 lg:justify-items-stretch">

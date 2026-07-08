@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   CheckSquare,
@@ -30,6 +30,8 @@ import {
 } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import Vault from "./Vault";
+import { fetchCurrentUser, logout } from "../lib/auth";
+import type { SessionUser } from "../lib/auth";
 
 const focusData = [
   { day: "Mon", hours: 3.2 },
@@ -187,6 +189,10 @@ function BookmarkCard({
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const [authStatus, setAuthStatus] = useState<"checking" | "ready">(
+    "checking",
+  );
+  const [currentUser, setCurrentUser] = useState<SessionUser | null>(null);
   const [activeNav, setActiveNav] = useState("overview");
   const [taskList, setTaskList] = useState(tasks);
   const [searchFocused, setSearchFocused] = useState(false);
@@ -198,6 +204,31 @@ export default function Dashboard() {
   const [bmSearch, setBmSearch] = useState("");
   const [bmAddOpen, setBmAddOpen] = useState(false);
   const [bmNew, setBmNew] = useState({ title: "", url: "", folder: "Design", tags: "" });
+
+  useEffect(() => {
+    let isActive = true;
+
+    fetchCurrentUser()
+      .then((user) => {
+        if (!isActive) {
+          return;
+        }
+
+        setCurrentUser(user);
+        setAuthStatus("ready");
+      })
+      .catch(() => {
+        if (!isActive) {
+          return;
+        }
+
+        navigate("/login", { replace: true });
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [navigate]);
 
   const filteredBookmarks = bookmarks.filter((b) => {
     const matchFolder = bmFolder === "All" || b.folder === bmFolder;
@@ -234,10 +265,27 @@ export default function Dashboard() {
 
   const completedCount = taskList.filter((t) => t.done).length;
   const totalTasks = taskList.length;
+  const displayName = currentUser?.name ?? "Maya Chen";
+  const firstName = currentUser?.name?.split(/\s+/)[0] ?? "Maya";
 
   const toggleTask = (id: number) => {
     setTaskList((prev) => prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
   };
+
+  if (authStatus === "checking") {
+    return (
+      <div
+        className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top_left,_rgba(139,124,248,0.18),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(94,207,176,0.12),_transparent_24%),linear-gradient(180deg,_#0c0c11_0%,_#09090d_100%)] text-foreground"
+        style={{ fontFamily: "'Figtree', sans-serif" }}
+      >
+        <div className="rounded-2xl border border-white/10 bg-card/80 px-6 py-5 text-center shadow-2xl backdrop-blur-xl">
+          <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+          <p className="text-sm font-medium text-foreground">Checking your session</p>
+          <p className="mt-1 text-xs text-muted-foreground">Hang tight while we load your workspace.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="size-full flex bg-background text-foreground overflow-hidden" style={{ fontFamily: "'Figtree', sans-serif" }}>
@@ -277,10 +325,24 @@ export default function Dashboard() {
           <div className="mt-3 px-3 flex items-center gap-2.5">
             <div className="w-6 h-6 rounded-full bg-gradient-to-br from-primary to-accent shrink-0" />
             <div className="min-w-0">
-              <p className="text-xs font-medium text-foreground truncate">Maya Chen</p>
+              <p className="text-xs font-medium text-foreground truncate">{displayName}</p>
               <p className="text-[10px] text-muted-foreground truncate">Senior Designer</p>
             </div>
           </div>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await logout();
+              } finally {
+                navigate("/login", { replace: true });
+              }
+            }}
+            className="mt-3 w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-secondary transition-all duration-150"
+          >
+            <X size={15} />
+            Sign out
+          </button>
         </div>
       </aside>
 
@@ -467,7 +529,7 @@ export default function Dashboard() {
           {activeNav !== "bookmarks" && activeNav !== "notes" && <>
           <div className="mb-6">
             <h1 className="text-[28px] font-semibold text-foreground leading-tight tracking-tight" style={{ fontFamily: "'Bricolage Grotesque', sans-serif" }}>
-              Good afternoon, Maya
+              Good afternoon, {firstName}
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">Tuesday, July 1 · You have 4 tasks due today</p>
           </div>

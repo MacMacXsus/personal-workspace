@@ -2,13 +2,32 @@ import "dotenv/config";
 
 import express from "express";
 import { getAppEnv } from "./config/env";
-import { testDatabaseConnection } from "./db/mysql";
+import { initializeAuthSchema, testDatabaseConnection } from "./db/mysql";
+import { createGoogleAuthRouter } from "./auth/google";
 
 const app = express();
 const appEnv = getAppEnv();
 const port = appEnv.port;
 
 app.use(express.json());
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (origin && origin === appEnv.auth.frontendUrl) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.setHeader("Vary", "Origin");
+  }
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  return next();
+});
 
 app.get("/", (_req, res) => {
   res.send("Server is running");
@@ -39,17 +58,27 @@ app.get("/db/health", async (_req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
-});
+app.use("/auth", createGoogleAuthRouter(appEnv));
 
-void testDatabaseConnection()
-  .then(() => {
-    console.log("Database connection check passed");
-  })
-  .catch((error) => {
-    const message =
-      error instanceof Error ? error.message : "Database connection failed";
+async function bootstrap() {
+  await testDatabaseConnection();
+  await initializeAuthSchema();
 
-    console.warn(`Database connection check failed: ${message}`);
+  app.listen(port, () => {
+    console.log(`Server running on http://localhost:${port}`);
+
+    if (!appEnv.auth.enabled) {
+      console.warn(
+        "Google OAuth is disabled until GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI are set.",
+      );
+    }
   });
+}
+
+void bootstrap().catch((error) => {
+  const message =
+    error instanceof Error ? error.message : "Server bootstrap failed";
+
+  console.error(`Failed to start server: ${message}`);
+  process.exit(1);
+});

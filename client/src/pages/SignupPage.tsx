@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowRight,
   Eye,
@@ -11,6 +11,7 @@ import {
   User,
 } from "lucide-react";
 import heroImage from "../assets/hero.png";
+import { fetchCurrentUser, startGoogleAuth } from "../lib/auth";
 
 const trustPoints = [
   "Encrypted sessions and secure device checks",
@@ -19,8 +20,27 @@ const trustPoints = [
 ];
 
 function SignupPage() {
+  const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  useEffect(() => {
+    let isActive = true;
+
+    fetchCurrentUser()
+      .then(() => {
+        if (isActive) {
+          navigate("/dashboard", { replace: true });
+        }
+      })
+      .catch(() => {
+        // Not signed in yet.
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [navigate]);
 
   return (
     <div className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(139,124,248,0.18),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(94,207,176,0.12),_transparent_24%),linear-gradient(180deg,_#0c0c11_0%,_#09090d_100%)] text-foreground">
@@ -47,8 +67,8 @@ function SignupPage() {
                 Create your account.
               </h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Set up your workspace and get back to focused work in a few
-                quick steps.
+                Set up your workspace with Google OAuth and get back to
+                focused work in a few quick steps.
               </p>
             </div>
 
@@ -56,6 +76,7 @@ function SignupPage() {
               className="space-y-5"
               onSubmit={(event) => {
                 event.preventDefault();
+                startGoogleAuth();
               }}
             >
               <div className="space-y-2">
@@ -180,7 +201,12 @@ function SignupPage() {
                 type="submit"
                 className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_18px_40px_rgba(139,124,248,0.25)]"
               >
-                Create account
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[conic-gradient(from_180deg,#4285F4_0deg,#4285F4_90deg,#34A853_90deg,#34A853_180deg,#FBBC05_180deg,#FBBC05_270deg,#EA4335_270deg,#EA4335_360deg)] p-[2px] text-[10px] font-semibold text-foreground">
+                  <span className="flex h-full w-full items-center justify-center rounded-full bg-background">
+                    G
+                  </span>
+                </span>
+                Continue with Google
                 <ArrowRight className="h-4 w-4" />
               </button>
 
@@ -200,8 +226,8 @@ function SignupPage() {
                 Why join now?
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Your workspace is set up to stay focused from day one. We can
-                wire up invite flows next.
+                Your workspace is set up to stay focused from day one. Google
+                sign-in is wired now, and invite flows can come next.
               </p>
             </div>
           </div>
@@ -228,8 +254,8 @@ function SignupPage() {
             </h1>
 
             <p className="mt-4 max-w-lg text-base leading-7 text-muted-foreground">
-              Same visual language as login, with a few more steps to set up
-              your account and get going.
+              Same visual language as login, with a Google-first sign-in flow
+              so the backend can stay simple for now.
             </p>
 
             <div className="mt-10 grid gap-4 justify-items-center sm:grid-cols-3 lg:justify-items-stretch">
