@@ -106,13 +106,13 @@ export default function LandingPage() {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate("/dashboard")}
+            onClick={() => navigate("/login")}
             className="text-sm text-muted-foreground hover:text-foreground transition-colors duration-150"
           >
             Sign in
           </button>
           <button
-            onClick={() => navigate("/dashboard")}
+            onClick={() => navigate("/login")}
             className="flex items-center gap-2 h-8 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-all duration-150"
           >
             Get started
@@ -152,17 +152,17 @@ export default function LandingPage() {
 
           <div className="flex items-center justify-center gap-3 flex-wrap">
             <button
-              onClick={() => navigate("/dashboard")}
+              onClick={() => navigate("/login")}
               className="flex items-center gap-2 h-11 px-6 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-all duration-150"
             >
               Start for free
               <ArrowRight size={15} />
             </button>
             <button
-              onClick={() => navigate("/dashboard")}
+              onClick={() => navigate("/login")}
               className="flex items-center gap-2 h-11 px-6 rounded-md border border-border text-sm text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all duration-150"
             >
-              View dashboard demo
+              View login UI
             </button>
           </div>
 
@@ -344,7 +344,7 @@ export default function LandingPage() {
             Join 2,400+ people who replaced their scattered tools with one focused environment.
           </p>
           <button
-            onClick={() => navigate("/dashboard")}
+            onClick={() => navigate("/login")}
             className="inline-flex items-center gap-2 h-11 px-8 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-all duration-150"
           >
             Get started for free
