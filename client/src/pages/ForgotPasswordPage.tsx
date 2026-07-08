@@ -8,7 +8,6 @@ import {
   Lock,
   Clock3,
 } from "lucide-react"
-import heroImage from "../assets/hero.png"
 
 const recoveryPoints = [
   "Reset links expire automatically for safety",

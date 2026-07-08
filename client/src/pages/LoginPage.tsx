@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowRight,
   Eye,
@@ -18,6 +18,7 @@ const trustPoints = [
 ];
 
 function LoginPage() {
+  const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
 
   return (
@@ -53,6 +54,7 @@ function LoginPage() {
               className="space-y-5"
               onSubmit={(event) => {
                 event.preventDefault();
+                navigate("/dashboard");
               }}
             >
               <div className="space-y-2">
