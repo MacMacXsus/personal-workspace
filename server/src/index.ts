@@ -3,7 +3,7 @@ import "dotenv/config";
 import express from "express";
 import { getAppEnv } from "./config/env";
 import { initializeAuthSchema, testDatabaseConnection } from "./db/mysql";
-import { createGoogleAuthRouter } from "./auth/google";
+import { createAuthRouter } from "./auth/google";
 
 const app = express();
 const appEnv = getAppEnv();
@@ -58,7 +58,7 @@ app.get("/db/health", async (_req, res) => {
   }
 });
 
-app.use("/auth", createGoogleAuthRouter(appEnv));
+app.use("/auth", createAuthRouter(appEnv));
 
 async function bootstrap() {
   await testDatabaseConnection();

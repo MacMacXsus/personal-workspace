@@ -20,11 +20,23 @@ type AuthUser = {
 
 type UserRow = {
   id: number;
-  google_sub: string;
+  google_sub: string | null;
   email: string;
   name: string;
+  password_hash: string | null;
   avatar_url: string | null;
 };
+
+type PasswordFields = {
+  name: string;
+  email: string;
+  password: string;
+};
+
+const PBKDF2_ITERATIONS = 120_000;
+const PBKDF2_KEY_LENGTH = 32;
+const PBKDF2_DIGEST = "sha256";
+const PASSWORD_HASH_PREFIX = "pbkdf2";
 
 function randomToken(bytes = 32): string {
   return crypto.randomBytes(bytes).toString("hex");
@@ -32,6 +44,10 @@ function randomToken(bytes = 32): string {
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 function parseCookies(cookieHeader: string | undefined): Record<string, string> {
@@ -125,6 +141,10 @@ function clearCookie(
   );
 }
 
+function sendAuthError(res: Response, status: number, message: string) {
+  return res.status(status).json({ error: message });
+}
+
 function buildGoogleAuthUrl(appEnv: AppEnv, state: string): string {
   if (!appEnv.auth.googleClientId || !appEnv.auth.googleRedirectUri) {
     throw new Error("Google OAuth is not configured.");
@@ -140,6 +160,88 @@ function buildGoogleAuthUrl(appEnv: AppEnv, state: string): string {
   authUrl.searchParams.set("prompt", "select_account");
 
   return authUrl.toString();
+}
+
+function toAuthUser(row: {
+  id: number;
+  name: string;
+  email: string;
+  avatar_url: string | null;
+}): AuthUser {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    avatarUrl: row.avatar_url,
+  };
+}
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.randomBytes(16).toString("hex");
+
+  const derivedKey = await new Promise<Buffer>((resolve, reject) => {
+    crypto.pbkdf2(
+      password,
+      salt,
+      PBKDF2_ITERATIONS,
+      PBKDF2_KEY_LENGTH,
+      PBKDF2_DIGEST,
+      (error, key) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve(key);
+      },
+    );
+  });
+
+  return [
+    PASSWORD_HASH_PREFIX,
+    PBKDF2_DIGEST,
+    PBKDF2_ITERATIONS.toString(),
+    salt,
+    derivedKey.toString("hex"),
+  ].join("$");
+}
+
+async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  const [prefix, digest, iterationsValue, salt, expectedHex] = storedHash.split("$");
+
+  if (
+    prefix !== PASSWORD_HASH_PREFIX ||
+    digest !== PBKDF2_DIGEST ||
+    !iterationsValue ||
+    !salt ||
+    !expectedHex
+  ) {
+    return false;
+  }
+
+  const iterations = Number(iterationsValue);
+
+  if (!Number.isInteger(iterations) || iterations <= 0) {
+    return false;
+  }
+
+  const expected = Buffer.from(expectedHex, "hex");
+
+  const derivedKey = await new Promise<Buffer>((resolve, reject) => {
+    crypto.pbkdf2(password, salt, iterations, expected.length, digest, (error, key) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve(key);
+    });
+  });
+
+  return (
+    derivedKey.length === expected.length &&
+    crypto.timingSafeEqual(derivedKey, expected)
+  );
 }
 
 async function exchangeCodeForTokens(appEnv: AppEnv, code: string) {
@@ -197,54 +299,6 @@ async function fetchGoogleUserInfo(accessToken: string): Promise<GoogleUserInfo>
   }
 
   return (await response.json()) as GoogleUserInfo;
-}
-
-async function upsertGoogleUser(profile: GoogleUserInfo): Promise<AuthUser> {
-  const [rows] = (await pool.execute(
-    `
-      SELECT id, google_sub, email, name, avatar_url
-      FROM users
-      WHERE google_sub = ? OR email = ?
-      LIMIT 1
-    `,
-    [profile.sub, profile.email],
-  )) as [UserRow[], unknown];
-
-  const existingUser = rows[0];
-  const avatarUrl = profile.picture ?? null;
-
-  if (existingUser) {
-    await pool.execute(
-      `
-        UPDATE users
-        SET google_sub = ?, email = ?, name = ?, avatar_url = ?
-        WHERE id = ?
-      `,
-      [profile.sub, profile.email, profile.name, avatarUrl, existingUser.id],
-    );
-
-    return {
-      id: existingUser.id,
-      name: profile.name,
-      email: profile.email,
-      avatarUrl,
-    };
-  }
-
-  const [result] = (await pool.execute(
-    `
-      INSERT INTO users (google_sub, email, name, avatar_url)
-      VALUES (?, ?, ?, ?)
-    `,
-    [profile.sub, profile.email, profile.name, avatarUrl],
-  )) as [{ insertId: number }, unknown];
-
-  return {
-    id: Number(result.insertId),
-    name: profile.name,
-    email: profile.email,
-    avatarUrl,
-  };
 }
 
 async function createSession(appEnv: AppEnv, userId: number): Promise<string> {
@@ -311,12 +365,146 @@ async function findUserFromSession(
     return null;
   }
 
+  return toAuthUser(user);
+}
+
+async function upsertGoogleUser(profile: GoogleUserInfo): Promise<AuthUser> {
+  const [rows] = (await pool.execute(
+    `
+      SELECT id, google_sub, email, name, password_hash, avatar_url
+      FROM users
+      WHERE google_sub = ? OR email = ?
+      LIMIT 1
+    `,
+    [profile.sub, profile.email],
+  )) as [UserRow[], unknown];
+
+  const existingUser = rows[0];
+  const avatarUrl = profile.picture ?? null;
+
+  if (existingUser) {
+    await pool.execute(
+      `
+        UPDATE users
+        SET google_sub = ?, email = ?, name = ?, avatar_url = ?
+        WHERE id = ?
+      `,
+      [profile.sub, profile.email, profile.name, avatarUrl, existingUser.id],
+    );
+
+    return {
+      id: existingUser.id,
+      name: profile.name,
+      email: profile.email,
+      avatarUrl,
+    };
+  }
+
+  const [result] = (await pool.execute(
+    `
+      INSERT INTO users (google_sub, email, name, password_hash, avatar_url)
+      VALUES (?, ?, ?, NULL, ?)
+    `,
+    [profile.sub, profile.email, profile.name, avatarUrl],
+  )) as [{ insertId: number }, unknown];
+
   return {
+    id: Number(result.insertId),
+    name: profile.name,
+    email: profile.email,
+    avatarUrl,
+  };
+}
+
+async function signupPasswordUser(fields: PasswordFields): Promise<AuthUser> {
+  const email = normalizeEmail(fields.email);
+  const passwordHash = await hashPassword(fields.password);
+
+  const [rows] = (await pool.execute(
+    `
+      SELECT id, google_sub, email, name, password_hash, avatar_url
+      FROM users
+      WHERE email = ?
+      LIMIT 1
+    `,
+    [email],
+  )) as [UserRow[], unknown];
+
+  const existingUser = rows[0];
+
+  if (existingUser) {
+    if (existingUser.password_hash) {
+      throw new Error("An account with this email already exists.");
+    }
+
+    const name = fields.name.trim();
+
+    await pool.execute(
+      `
+        UPDATE users
+        SET name = ?, password_hash = ?
+        WHERE id = ?
+      `,
+      [name, passwordHash, existingUser.id],
+    );
+
+    return {
+      id: existingUser.id,
+      name,
+      email: existingUser.email,
+      avatarUrl: existingUser.avatar_url,
+    };
+  }
+
+  const [result] = (await pool.execute(
+    `
+      INSERT INTO users (google_sub, email, name, password_hash, avatar_url)
+      VALUES (NULL, ?, ?, ?, NULL)
+    `,
+    [email, fields.name.trim(), passwordHash],
+  )) as [{ insertId: number }, unknown];
+
+  return {
+    id: Number(result.insertId),
+    name: fields.name.trim(),
+    email,
+    avatarUrl: null,
+  };
+}
+
+async function loginPasswordUser(email: string, password: string): Promise<AuthUser> {
+  const [rows] = (await pool.execute(
+    `
+      SELECT id, google_sub, email, name, password_hash, avatar_url
+      FROM users
+      WHERE email = ?
+      LIMIT 1
+    `,
+    [normalizeEmail(email)],
+  )) as [UserRow[], unknown];
+
+  const user = rows[0];
+
+  if (!user) {
+    throw new Error("Invalid email or password.");
+  }
+
+  if (!user.password_hash) {
+    throw new Error("This account uses Google sign-in. Try Google login instead.");
+  }
+
+  const isValid = await verifyPassword(password, user.password_hash);
+
+  if (!isValid) {
+    throw new Error("Invalid email or password.");
+  }
+
+  return toAuthUser({
     id: user.id,
     name: user.name,
     email: user.email,
-    avatarUrl: user.avatar_url,
-  };
+    avatar_url: user.avatar_url,
+  });
 }
 
 function authUnavailableMessage(appEnv: AppEnv): string {
@@ -329,7 +517,46 @@ function authUnavailableMessage(appEnv: AppEnv): string {
   return `Google OAuth is not configured yet. Set ${missing.join(", ")} and FRONTEND_URL in server/.env.`;
 }
 
-export function createGoogleAuthRouter(appEnv: AppEnv): Router {
+function validatePasswordFields(
+  payload: Partial<PasswordFields>,
+  requireName: boolean,
+): PasswordFields {
+  const name = (payload.name ?? "").trim();
+  const email = (payload.email ?? "").trim();
+  const password = payload.password ?? "";
+
+  if (requireName && name.length < 2) {
+    throw new Error("Please enter your name.");
+  }
+
+  if (!email) {
+    throw new Error("Please enter your email.");
+  }
+
+  if (!password || password.length < 8) {
+    throw new Error("Password must be at least 8 characters.");
+  }
+
+  return {
+    name,
+    email,
+    password,
+  };
+}
+
+async function attachSession(res: Response, appEnv: AppEnv, userId: number) {
+  const sessionToken = await createSession(appEnv, userId);
+
+  setCookie(res, appEnv.auth.sessionCookieName, sessionToken, {
+    path: "/",
+    maxAgeSeconds: appEnv.auth.sessionDurationDays * 24 * 60 * 60,
+    httpOnly: true,
+    secure: appEnv.auth.cookieSecure,
+    sameSite: "lax",
+  });
+}
+
+export function createAuthRouter(appEnv: AppEnv): Router {
   const router = Router();
 
   router.get("/google", (_req, res) => {
@@ -385,17 +612,41 @@ export function createGoogleAuthRouter(appEnv: AppEnv): Router {
     }
 
     const user = await upsertGoogleUser(profile);
-    const sessionToken = await createSession(appEnv, user.id);
-
-    setCookie(res, appEnv.auth.sessionCookieName, sessionToken, {
-      path: "/",
-      maxAgeSeconds: appEnv.auth.sessionDurationDays * 24 * 60 * 60,
-      httpOnly: true,
-      secure: appEnv.auth.cookieSecure,
-      sameSite: "lax",
-    });
+    await attachSession(res, appEnv, user.id);
 
     return res.redirect(new URL("/dashboard", appEnv.auth.frontendUrl).toString());
+  });
+
+  router.post("/signup", async (req, res) => {
+    try {
+      const fields = validatePasswordFields(req.body ?? {}, true);
+      const user = await signupPasswordUser(fields);
+
+      await attachSession(res, appEnv, user.id);
+
+      return res.status(201).json({ user });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to create account.";
+
+      return sendAuthError(res, 400, message);
+    }
+  });
+
+  router.post("/login", async (req, res) => {
+    try {
+      const fields = validatePasswordFields(req.body ?? {}, false);
+      const user = await loginPasswordUser(fields.email, fields.password);
+
+      await attachSession(res, appEnv, user.id);
+
+      return res.json({ user });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to sign in.";
+
+      return sendAuthError(res, 401, message);
+    }
   });
 
   router.get("/me", async (req, res) => {
@@ -429,3 +680,5 @@ export function createGoogleAuthRouter(appEnv: AppEnv): Router {
 
   return router;
 }
+
+export const createGoogleAuthRouter = createAuthRouter;

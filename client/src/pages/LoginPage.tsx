@@ -10,7 +10,11 @@ import {
   Sparkles,
 } from "lucide-react";
 import heroImage from "../assets/hero.png";
-import { fetchCurrentUser, startGoogleAuth } from "../lib/auth";
+import {
+  fetchCurrentUser,
+  loginWithPassword,
+  startGoogleAuth,
+} from "../lib/auth";
 
 const trustPoints = [
   "Encrypted sessions and secure device checks",
@@ -21,6 +25,8 @@ const trustPoints = [
 function LoginPage() {
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     let isActive = true;
@@ -65,16 +71,36 @@ function LoginPage() {
                 Log in to continue.
               </h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Google OAuth is the live sign-in path. We can wire email and
-                password later if we need it.
+                Sign in with email and password, or use Google if that is
+                faster for you.
               </p>
             </div>
 
             <form
               className="space-y-5"
-              onSubmit={(event) => {
+              onSubmit={async (event) => {
                 event.preventDefault();
-                startGoogleAuth();
+
+                const form = event.currentTarget;
+                const formData = new FormData(form);
+                const email = String(formData.get("email") ?? "");
+                const password = String(formData.get("password") ?? "");
+
+                setSubmitError(null);
+                setIsSubmitting(true);
+
+                try {
+                  await loginWithPassword(email, password);
+                  navigate("/dashboard", { replace: true });
+                } catch (error) {
+                  setSubmitError(
+                    error instanceof Error
+                      ? error.message
+                      : "Unable to sign in.",
+                  );
+                } finally {
+                  setIsSubmitting(false);
+                }
               }}
             >
               <div className="space-y-2">
@@ -147,18 +173,35 @@ function LoginPage() {
                 </Link>
               </div>
 
-              <button
-                type="submit"
-                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_18px_40px_rgba(139,124,248,0.25)]"
-              >
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[conic-gradient(from_180deg,#4285F4_0deg,#4285F4_90deg,#34A853_90deg,#34A853_180deg,#FBBC05_180deg,#FBBC05_270deg,#EA4335_270deg,#EA4335_360deg)] p-[2px] text-[10px] font-semibold text-foreground">
-                  <span className="flex h-full w-full items-center justify-center rounded-full bg-background">
-                    G
+              {submitError && (
+                <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                  {submitError}
+                </p>
+              )}
+
+              <div className="space-y-3">
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_18px_40px_rgba(139,124,248,0.25)] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isSubmitting ? "Signing in..." : "Continue with email"}
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={startGoogleAuth}
+                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-border bg-background/60 px-4 text-sm font-medium text-foreground transition-all hover:border-primary/40 hover:bg-secondary/50"
+                >
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[conic-gradient(from_180deg,#4285F4_0deg,#4285F4_90deg,#34A853_90deg,#34A853_180deg,#FBBC05_180deg,#FBBC05_270deg,#EA4335_270deg,#EA4335_360deg)] p-[2px] text-[10px] font-semibold text-foreground">
+                    <span className="flex h-full w-full items-center justify-center rounded-full bg-background">
+                      G
+                    </span>
                   </span>
-                </span>
-                Continue with Google
-                <ArrowRight className="h-4 w-4" />
-              </button>
+                  Continue with Google
+                </button>
+              </div>
 
               <p className="text-center text-xs text-muted-foreground">
                 By continuing, you agree to the workspace terms and privacy
@@ -205,7 +248,8 @@ function LoginPage() {
 
             <p className="mt-4 max-w-lg text-base leading-7 text-muted-foreground">
               Jump back into your tasks, notes, and calendar from one clean
-              place. The Google OAuth flow is wired to the backend now.
+              place. Email/password and Google both share the same session
+              backend now.
             </p>
 
             <div className="mt-10 grid gap-4 justify-items-center sm:grid-cols-3 lg:justify-items-stretch">
