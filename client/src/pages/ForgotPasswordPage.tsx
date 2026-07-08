@@ -1,26 +1,23 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useState } from "react"
+import { Link } from "react-router-dom"
 import {
   ArrowRight,
-  Eye,
-  EyeOff,
-  Lock,
   Mail,
   ShieldCheck,
   Sparkles,
-  User,
-} from "lucide-react";
-import heroImage from "../assets/hero.png";
+  Lock,
+  Clock3,
+} from "lucide-react"
+import heroImage from "../assets/hero.png"
 
-const trustPoints = [
-  "Encrypted sessions and secure device checks",
-  "Single sign-on ready for teams later on",
-  "Fast access to tasks, notes, and focus stats",
-];
+const recoveryPoints = [
+  "Reset links expire automatically for safety",
+  "Secure recovery keeps your workspace protected",
+  "Get back in without losing your flow",
+]
 
-function SignupPage() {
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+function ForgotPasswordPage() {
+  const [email, setEmail] = useState("")
 
   return (
     <div className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(139,124,248,0.18),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(94,207,176,0.12),_transparent_24%),linear-gradient(180deg,_#0c0c11_0%,_#09090d_100%)] text-foreground">
@@ -29,7 +26,7 @@ function SignupPage() {
           <div className="relative z-10 w-full max-w-md rounded-[1.5rem] border border-white/10 bg-card/90 p-6 shadow-2xl backdrop-blur-xl sm:p-8 lg:max-w-lg lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none xl:max-w-xl">
             <div className="mb-8">
               <Link
-                to="/"
+                to="/login"
                 className="mb-8 inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
               >
                 <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5">
@@ -38,170 +35,66 @@ function SignupPage() {
                 Workspace
               </Link>
               <p className="text-xs font-mono uppercase tracking-[0.25em] text-primary">
-                Get started
+                Recovery
               </p>
               <h2
                 className="mt-3 text-3xl font-semibold tracking-tight text-foreground"
                 style={{ fontFamily: "'Bricolage Grotesque', sans-serif" }}
               >
-                Create your account.
+                Reset your password.
               </h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Set up your workspace and get back to focused work in a few
-                quick steps.
+                Enter your email and we&apos;ll send a secure link to create a new password.
               </p>
             </div>
 
             <form
               className="space-y-5"
               onSubmit={(event) => {
-                event.preventDefault();
+                event.preventDefault()
               }}
             >
               <div className="space-y-2">
-                <label
-                  htmlFor="name"
-                  className="text-sm font-medium text-foreground"
-                >
-                  Full name
-                </label>
-                <div className="relative">
-                  <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    id="name"
-                    name="name"
-                    type="text"
-                    autoComplete="name"
-                    placeholder="Your name"
-                    className="h-11 w-full rounded-xl border border-border bg-background/80 pl-10 pr-4 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/20"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label
-                  htmlFor="email"
-                  className="text-sm font-medium text-foreground"
-                >
+                <label htmlFor="recovery-email" className="text-sm font-medium text-foreground">
                   Email
                 </label>
                 <div className="relative">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <input
-                    id="email"
+                    id="recovery-email"
                     name="email"
                     type="email"
                     autoComplete="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
                     placeholder="you@example.com"
                     className="h-11 w-full rounded-xl border border-border bg-background/80 pl-10 pr-4 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label
-                  htmlFor="password"
-                  className="text-sm font-medium text-foreground"
-                >
-                  Password
-                </label>
-                <div className="relative">
-                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    id="password"
-                    name="password"
-                    type={showPassword ? "text" : "password"}
-                    autoComplete="new-password"
-                    placeholder="Create a password"
-                    className="h-11 w-full rounded-xl border border-border bg-background/80 pl-10 pr-12 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/20"
-                  />
-                  <button
-                    type="button"
-                    aria-label={
-                      showPassword ? "Hide password" : "Show password"
-                    }
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
-                    onClick={() => setShowPassword((value) => !value)}
-                  >
-                    {showPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label
-                  htmlFor="confirmPassword"
-                  className="text-sm font-medium text-foreground"
-                >
-                  Confirm password
-                </label>
-                <div className="relative">
-                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    id="confirmPassword"
-                    name="confirmPassword"
-                    type={showConfirmPassword ? "text" : "password"}
-                    autoComplete="new-password"
-                    placeholder="Confirm your password"
-                    className="h-11 w-full rounded-xl border border-border bg-background/80 pl-10 pr-12 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/20"
-                  />
-                  <button
-                    type="button"
-                    aria-label={
-                      showConfirmPassword
-                        ? "Hide confirmation password"
-                        : "Show confirmation password"
-                    }
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
-                    onClick={() => setShowConfirmPassword((value) => !value)}
-                  >
-                    {showConfirmPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              <label className="flex items-start gap-2 text-sm text-muted-foreground">
-                <input
-                  type="checkbox"
-                  className="mt-1 h-4 w-4 rounded border-border bg-background text-primary focus:ring-primary/20"
-                />
-                I agree to the workspace terms and privacy policy.
-              </label>
-
               <button
                 type="submit"
                 className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-[0_18px_40px_rgba(139,124,248,0.25)]"
               >
-                Create account
+                Send reset link
                 <ArrowRight className="h-4 w-4" />
               </button>
 
               <p className="text-center text-xs text-muted-foreground">
-                Already have an account?{" "}
-                <Link
-                  to="/login"
-                  className="font-medium text-primary transition-colors hover:text-primary/80"
-                >
-                  Sign in
-                </Link>
+                Check your inbox after submitting. If you don&apos;t see it, check spam or try again.
               </p>
             </form>
 
             <div className="mt-8 rounded-2xl border border-white/10 bg-white/4 p-4">
-              <p className="text-sm font-medium text-foreground">
-                Why join now?
-              </p>
+              <p className="text-sm font-medium text-foreground">Need to go back?</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Your workspace is set up to stay focused from day one. We can
-                wire up invite flows next.
+                <Link
+                  to="/login"
+                  className="font-medium text-primary transition-colors hover:text-primary/80"
+                >
+                  Return to sign in
+                </Link>
               </p>
             </div>
           </div>
@@ -217,23 +110,22 @@ function SignupPage() {
           <div className="relative z-10 flex w-full flex-col items-center text-center lg:items-start lg:text-left lg:max-w-none">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
               <ShieldCheck className="h-3.5 w-3.5" />
-              Designed to help you start strong
+              Recovery without the friction
             </div>
 
             <h1
               className="mt-6 max-w-lg text-4xl font-semibold tracking-tight text-foreground sm:text-5xl"
               style={{ fontFamily: "'Bricolage Grotesque', sans-serif" }}
             >
-              Build your workspace from day one.
+              Recover access and keep moving.
             </h1>
 
             <p className="mt-4 max-w-lg text-base leading-7 text-muted-foreground">
-              Same visual language as login, with a few more steps to set up
-              your account and get going.
+              A simple reset flow that stays consistent with the login and signup pages, so the whole auth experience feels unified.
             </p>
 
             <div className="mt-10 grid gap-4 justify-items-center sm:grid-cols-3 lg:justify-items-stretch">
-              {trustPoints.map((point) => (
+              {recoveryPoints.map((point) => (
                 <div
                   key={point}
                   className="w-full max-w-sm rounded-2xl border border-white/8 bg-white/4 p-4 text-center backdrop-blur-sm lg:max-w-none lg:text-left"
@@ -250,20 +142,16 @@ function SignupPage() {
 
             <div className="mt-10 overflow-hidden rounded-3xl border border-white/10 bg-card/70 p-5 shadow-[0_30px_120px_rgba(0,0,0,0.35)] backdrop-blur-xl">
               <div className="flex flex-col items-center gap-3 text-center sm:flex-row sm:text-left">
-                <img
-                  src={heroImage}
-                  alt="Abstract workspace illustration"
-                  className="h-20 w-20 shrink-0 rounded-2xl border border-white/10 bg-black/40 object-cover p-2"
-                />
+                <Clock3 className="h-10 w-10 shrink-0 rounded-2xl border border-white/10 bg-black/40 p-2 text-primary" />
                 <div>
                   <p className="text-xs font-mono uppercase tracking-[0.24em] text-muted-foreground">
-                    Built for focus
+                    Fast recovery
                   </p>
                   <p
                     className="mt-1 text-lg font-semibold text-foreground"
                     style={{ fontFamily: "'Bricolage Grotesque', sans-serif" }}
                   >
-                    One place for the work that matters.
+                    Back in your workspace in minutes.
                   </p>
                 </div>
               </div>
@@ -272,7 +160,7 @@ function SignupPage() {
         </section>
       </div>
     </div>
-  );
+  )
 }
 
-export default SignupPage;
+export default ForgotPasswordPage
