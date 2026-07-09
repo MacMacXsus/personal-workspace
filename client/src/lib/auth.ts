@@ -25,6 +25,22 @@ type VerifyOtpSuccessResponse = {
   user: SessionUser;
 };
 
+type PasswordResetRequestResponse = {
+  ok: true;
+  email: string;
+  message: string;
+  deliveryStatus: "sent" | "failed";
+};
+
+type PasswordResetSuccessResponse = {
+  user: SessionUser;
+};
+
+type PasswordResetConfirmResponse = {
+  ok: true;
+  message: string;
+};
+
 type VerificationResponse = {
   ok: true;
   message: string;
@@ -119,6 +135,48 @@ export async function verifyOtp(code: string) {
   const data = await requestJson<VerifyOtpSuccessResponse>("/auth/verify-otp", {
     code,
   });
+
+  return data.user;
+}
+
+export async function requestPasswordReset(email: string) {
+  const data = await requestJson<PasswordResetRequestResponse>(
+    "/auth/forgot-password/request",
+    {
+      email,
+    },
+  );
+
+  return data;
+}
+
+export async function resendPasswordReset() {
+  const data = await requestJson<PasswordResetRequestResponse>(
+    "/auth/forgot-password/resend",
+    {},
+  );
+
+  return data;
+}
+
+export async function confirmPasswordResetCode(code: string) {
+  const data = await requestJson<PasswordResetConfirmResponse>(
+    "/auth/forgot-password/confirm",
+    {
+      code,
+    },
+  );
+
+  return data;
+}
+
+export async function resetPassword(password: string) {
+  const data = await requestJson<PasswordResetSuccessResponse>(
+    "/auth/reset-password",
+    {
+      password,
+    },
+  );
 
   return data.user;
 }

@@ -14,6 +14,8 @@ export type AuthConfig = {
   sessionCookieName: string;
   stateCookieName: string;
   pendingVerificationCookieName: string;
+  pendingPasswordResetCookieName: string;
+  pendingPasswordResetConfirmedCookieName: string;
   sessionDurationDays: number;
   cookieSecure: boolean;
   verificationCodeLength: number;
@@ -179,6 +181,12 @@ export function getAppEnv(): AppEnv {
       pendingVerificationCookieName:
         getOptionalEnv("AUTH_PENDING_VERIFICATION_COOKIE_NAME") ??
         "workspace_pending_verification",
+      pendingPasswordResetCookieName:
+        getOptionalEnv("AUTH_PENDING_PASSWORD_RESET_COOKIE_NAME") ??
+        "workspace_pending_password_reset",
+      pendingPasswordResetConfirmedCookieName:
+        getOptionalEnv("AUTH_PENDING_PASSWORD_RESET_CONFIRMED_COOKIE_NAME") ??
+        "workspace_pending_password_reset_confirmed",
       sessionDurationDays: parseInteger(
         process.env.AUTH_SESSION_DURATION_DAYS,
         30,

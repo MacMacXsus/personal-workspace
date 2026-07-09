@@ -31,6 +31,10 @@ export async function initializeAuthSchema() {
       email_verification_code_hash CHAR(64) NULL,
       email_verification_expires_at DATETIME NULL DEFAULT NULL,
       email_verification_sent_at TIMESTAMP NULL DEFAULT NULL,
+      password_reset_token_hash CHAR(64) NULL,
+      password_reset_code_hash CHAR(64) NULL,
+      password_reset_expires_at DATETIME NULL DEFAULT NULL,
+      password_reset_sent_at TIMESTAMP NULL DEFAULT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
@@ -90,6 +94,34 @@ export async function initializeAuthSchema() {
     await pool.execute(`
       ALTER TABLE users
       ADD COLUMN email_verification_sent_at TIMESTAMP NULL DEFAULT NULL AFTER email_verification_expires_at
+    `);
+  }
+
+  if (!columns.has("password_reset_token_hash")) {
+    await pool.execute(`
+      ALTER TABLE users
+      ADD COLUMN password_reset_token_hash CHAR(64) NULL AFTER email_verification_sent_at
+    `);
+  }
+
+  if (!columns.has("password_reset_code_hash")) {
+    await pool.execute(`
+      ALTER TABLE users
+      ADD COLUMN password_reset_code_hash CHAR(64) NULL AFTER password_reset_token_hash
+    `);
+  }
+
+  if (!columns.has("password_reset_expires_at")) {
+    await pool.execute(`
+      ALTER TABLE users
+      ADD COLUMN password_reset_expires_at DATETIME NULL DEFAULT NULL AFTER password_reset_code_hash
+    `);
+  }
+
+  if (!columns.has("password_reset_sent_at")) {
+    await pool.execute(`
+      ALTER TABLE users
+      ADD COLUMN password_reset_sent_at TIMESTAMP NULL DEFAULT NULL AFTER password_reset_expires_at
     `);
   }
 

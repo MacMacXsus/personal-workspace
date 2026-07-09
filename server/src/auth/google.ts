@@ -31,11 +31,21 @@ type UserRow = {
   email_verification_code_hash: string | null;
   email_verification_expires_at: Date | string | null;
   email_verification_sent_at: Date | string | null;
+  password_reset_token_hash: string | null;
+  password_reset_code_hash: string | null;
+  password_reset_expires_at: Date | string | null;
+  password_reset_sent_at: Date | string | null;
 };
 
 type PasswordFields = {
   name: string;
   email: string;
+  password: string;
+};
+
+type PasswordResetFields = {
+  email: string;
+  code: string;
   password: string;
 };
 
@@ -56,6 +66,7 @@ const PBKDF2_KEY_LENGTH = 32;
 const PBKDF2_DIGEST = "sha256";
 const PASSWORD_HASH_PREFIX = "pbkdf2";
 const VERIFICATION_ROUTE = "/verify-otp";
+const PASSWORD_RESET_ROUTE = "/reset-password";
 
 function randomToken(bytes = 32): string {
   return crypto.randomBytes(bytes).toString("hex");
@@ -230,6 +241,33 @@ function buildVerificationEmailMessage(
   };
 }
 
+function buildPasswordResetEmailMessage(
+  appEnv: AppEnv,
+  email: string,
+  code: string,
+): {
+  subject: string;
+  htmlContent: string;
+} {
+  const subject = "Your Workspace password reset code";
+  const expiryMinutes = appEnv.auth.verificationCodeExpiryMinutes;
+
+  return {
+    subject,
+    htmlContent: `
+      <div style="font-family: Inter, Arial, sans-serif; color: #111827; line-height: 1.6;">
+        <h2 style="margin: 0 0 12px; font-size: 24px;">Reset your Workspace password</h2>
+        <p style="margin: 0 0 16px;">Use this code to confirm the password reset for <strong>${email}</strong>.</p>
+        <div style="display: inline-block; padding: 16px 22px; border-radius: 14px; background: #111827; color: #f9fafb; font-size: 28px; letter-spacing: 0.28em; font-weight: 700;">
+          ${code}
+        </div>
+        <p style="margin: 16px 0 0;">This code expires in <strong>${expiryMinutes} minutes</strong>.</p>
+        <p style="margin: 8px 0 0; color: #6b7280;">If you did not request this, you can ignore this email.</p>
+      </div>
+    `,
+  };
+}
+
 async function sendBrevoEmail(
   appEnv: AppEnv,
   toEmail: string,
@@ -376,6 +414,16 @@ function isVerificationExpired(
   return parseDatabaseTimestampMillis(row.email_verification_expires_at) <= Date.now();
 }
 
+function isPasswordResetExpired(
+  row: Pick<UserRow, "password_reset_expires_at">,
+): boolean {
+  if (!row.password_reset_expires_at) {
+    return true;
+  }
+
+  return parseDatabaseTimestampMillis(row.password_reset_expires_at) <= Date.now();
+}
+
 function parseDatabaseTimestampMillis(value: Date | string): number {
   if (value instanceof Date) {
     return value.getTime();
@@ -412,12 +460,82 @@ function clearPendingVerificationCookie(res: Response, appEnv: AppEnv) {
   });
 }
 
+function setPendingPasswordResetCookie(
+  res: Response,
+  appEnv: AppEnv,
+  token: string,
+) {
+  setCookie(res, appEnv.auth.pendingPasswordResetCookieName, token, {
+    path: "/auth",
+    maxAgeSeconds: appEnv.auth.verificationCodeExpiryMinutes * 60,
+    httpOnly: true,
+    secure: appEnv.auth.cookieSecure,
+    sameSite: "lax",
+  });
+}
+
+function clearPendingPasswordResetCookie(res: Response, appEnv: AppEnv) {
+  clearCookie(res, appEnv.auth.pendingPasswordResetCookieName, {
+    path: "/auth",
+    secure: appEnv.auth.cookieSecure,
+    sameSite: "lax",
+  });
+}
+
+function setPendingPasswordResetConfirmedCookie(
+  res: Response,
+  appEnv: AppEnv,
+  token: string,
+) {
+  setCookie(
+    res,
+    appEnv.auth.pendingPasswordResetConfirmedCookieName,
+    token,
+    {
+      path: "/auth",
+      maxAgeSeconds: appEnv.auth.verificationCodeExpiryMinutes * 60,
+      httpOnly: true,
+      secure: appEnv.auth.cookieSecure,
+      sameSite: "lax",
+    },
+  );
+}
+
+function clearPendingPasswordResetConfirmedCookie(
+  res: Response,
+  appEnv: AppEnv,
+) {
+  clearCookie(res, appEnv.auth.pendingPasswordResetConfirmedCookieName, {
+    path: "/auth",
+    secure: appEnv.auth.cookieSecure,
+    sameSite: "lax",
+  });
+}
+
+function readPendingPasswordResetToken(req: Request, appEnv: AppEnv) {
+  return readCookie(req, appEnv.auth.pendingPasswordResetCookieName);
+}
+
+function readConfirmedPasswordResetToken(req: Request, appEnv: AppEnv) {
+  return readCookie(req, appEnv.auth.pendingPasswordResetConfirmedCookieName);
+}
+
 async function sendVerificationChallengeEmail(
   appEnv: AppEnv,
   user: { email: string; name: string },
   code: string,
 ) {
   const emailMessage = buildVerificationEmailMessage(appEnv, user.email, code);
+
+  await sendBrevoEmail(appEnv, user.email, user.name, emailMessage);
+}
+
+async function sendPasswordResetChallengeEmail(
+  appEnv: AppEnv,
+  user: { email: string; name: string },
+  code: string,
+) {
+  const emailMessage = buildPasswordResetEmailMessage(appEnv, user.email, code);
 
   await sendBrevoEmail(appEnv, user.email, user.name, emailMessage);
 }
@@ -464,6 +582,49 @@ async function issueVerificationChallenge(
   }
 }
 
+async function issuePasswordResetChallenge(
+  appEnv: AppEnv,
+  user: { id: number; email: string; name: string },
+  res: Response,
+): Promise<{ deliveryStatus: "sent" | "failed"; message: string }> {
+  const token = randomToken(32);
+  const code = generateOtpCode(appEnv.auth.verificationCodeLength);
+  const tokenHash = sha256(token);
+  const codeHash = sha256(code);
+
+  await pool.execute(
+    `
+      UPDATE users
+      SET password_reset_token_hash = ?,
+          password_reset_code_hash = ?,
+          password_reset_expires_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE),
+          password_reset_sent_at = UTC_TIMESTAMP()
+      WHERE id = ?
+    `,
+    [tokenHash, codeHash, appEnv.auth.verificationCodeExpiryMinutes, user.id],
+  );
+
+  setPendingPasswordResetCookie(res, appEnv, token);
+  clearPendingPasswordResetConfirmedCookie(res, appEnv);
+
+  try {
+    await sendPasswordResetChallengeEmail(appEnv, user, code);
+
+    return {
+      deliveryStatus: "sent",
+      message: `We sent a password reset code to ${user.email}.`,
+    };
+  } catch (error) {
+    const details =
+      error instanceof Error ? error.message : "Unknown email delivery failure";
+
+    return {
+      deliveryStatus: "failed",
+      message: `We prepared your password reset code, but the email could not be sent right now. ${details}`,
+    };
+  }
+}
+
 async function findPendingVerificationUser(appEnv: AppEnv, req: Request) {
   const pendingToken = readCookie(req, appEnv.auth.pendingVerificationCookieName);
 
@@ -489,6 +650,40 @@ async function findPendingVerificationUser(appEnv: AppEnv, req: Request) {
   return rows[0] ?? null;
 }
 
+async function findPendingPasswordResetUser(appEnv: AppEnv, req: Request) {
+  const pendingToken = readPendingPasswordResetToken(req, appEnv);
+
+  if (!pendingToken) {
+    return null;
+  }
+
+  const pendingTokenHash = sha256(pendingToken);
+
+  const [rows] = (await pool.execute(
+    `
+      SELECT id, google_sub, email, name, password_hash, avatar_url,
+             email_verified_at, email_verification_token_hash,
+             email_verification_code_hash, email_verification_expires_at,
+             email_verification_sent_at, password_reset_token_hash,
+             password_reset_code_hash, password_reset_expires_at,
+             password_reset_sent_at
+      FROM users
+      WHERE password_reset_token_hash = ?
+      LIMIT 1
+    `,
+    [pendingTokenHash],
+  )) as [UserRow[], unknown];
+
+  return rows[0] ?? null;
+}
+
+function hasConfirmedPasswordReset(appEnv: AppEnv, req: Request): boolean {
+  const pendingToken = readPendingPasswordResetToken(req, appEnv);
+  const confirmedToken = readConfirmedPasswordResetToken(req, appEnv);
+
+  return Boolean(pendingToken && confirmedToken && pendingToken === confirmedToken);
+}
+
 async function completeVerification(
   appEnv: AppEnv,
   res: Response,
@@ -508,6 +703,40 @@ async function completeVerification(
   );
 
   clearPendingVerificationCookie(res, appEnv);
+  await attachSession(res, appEnv, user.id);
+
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    avatarUrl: user.avatar_url,
+  };
+}
+
+async function completePasswordReset(
+  appEnv: AppEnv,
+  res: Response,
+  user: UserRow,
+  password: string,
+): Promise<AuthUser> {
+  const passwordHash = await hashPassword(password);
+
+  await pool.execute(
+    `
+      UPDATE users
+      SET password_hash = ?,
+          password_reset_token_hash = NULL,
+          password_reset_code_hash = NULL,
+          password_reset_expires_at = NULL,
+          password_reset_sent_at = NULL
+      WHERE id = ?
+    `,
+    [passwordHash, user.id],
+  );
+
+  await pool.execute("DELETE FROM sessions WHERE user_id = ?", [user.id]);
+  clearPendingPasswordResetCookie(res, appEnv);
+  clearPendingPasswordResetConfirmedCookie(res, appEnv);
   await attachSession(res, appEnv, user.id);
 
   return {
@@ -684,6 +913,10 @@ async function upsertGoogleUser(profile: GoogleUserInfo): Promise<UserRow> {
       email_verification_expires_at:
         existingUser.email_verification_expires_at,
       email_verification_sent_at: existingUser.email_verification_sent_at,
+      password_reset_token_hash: existingUser.password_reset_token_hash,
+      password_reset_code_hash: existingUser.password_reset_code_hash,
+      password_reset_expires_at: existingUser.password_reset_expires_at,
+      password_reset_sent_at: existingUser.password_reset_sent_at,
     };
   }
 
@@ -714,6 +947,10 @@ async function upsertGoogleUser(profile: GoogleUserInfo): Promise<UserRow> {
     email_verification_code_hash: null,
     email_verification_expires_at: null,
     email_verification_sent_at: null,
+    password_reset_token_hash: null,
+    password_reset_code_hash: null,
+    password_reset_expires_at: null,
+    password_reset_sent_at: null,
   };
 }
 
@@ -767,6 +1004,10 @@ async function signupPasswordUser(fields: PasswordFields): Promise<UserRow> {
       email_verification_expires_at:
         existingUser.email_verification_expires_at,
       email_verification_sent_at: existingUser.email_verification_sent_at,
+      password_reset_token_hash: existingUser.password_reset_token_hash,
+      password_reset_code_hash: existingUser.password_reset_code_hash,
+      password_reset_expires_at: existingUser.password_reset_expires_at,
+      password_reset_sent_at: existingUser.password_reset_sent_at,
     };
   }
 
@@ -797,6 +1038,10 @@ async function signupPasswordUser(fields: PasswordFields): Promise<UserRow> {
     email_verification_code_hash: null,
     email_verification_expires_at: null,
     email_verification_sent_at: null,
+    password_reset_token_hash: null,
+    password_reset_code_hash: null,
+    password_reset_expires_at: null,
+    password_reset_sent_at: null,
   };
 }
 
@@ -986,6 +1231,64 @@ export function createAuthRouter(appEnv: AppEnv): Router {
     }
   });
 
+  router.post("/forgot-password/request", async (req, res) => {
+    try {
+      const email = normalizeEmail(String(req.body?.email ?? ""));
+
+      if (!email) {
+        return sendAuthError(res, 400, "Please enter your email address.");
+      }
+
+      const [rows] = (await pool.execute(
+        `
+          SELECT id, google_sub, email, name, password_hash, avatar_url,
+                 email_verified_at, email_verification_token_hash,
+                 email_verification_code_hash, email_verification_expires_at,
+                 email_verification_sent_at, password_reset_token_hash,
+                 password_reset_code_hash, password_reset_expires_at,
+                 password_reset_sent_at
+          FROM users
+          WHERE email = ?
+          LIMIT 1
+        `,
+        [email],
+      )) as [UserRow[], unknown];
+
+      const user = rows[0];
+
+      if (!user) {
+        return res.json({
+          ok: true,
+          email,
+          message: `If an account exists for ${email}, we sent a password reset code.`,
+          deliveryStatus: "sent",
+        });
+      }
+
+      const challenge = await issuePasswordResetChallenge(
+        appEnv,
+        {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+        },
+        res,
+      );
+
+      return res.json({
+        ok: true,
+        email: user.email,
+        message: challenge.message,
+        deliveryStatus: challenge.deliveryStatus,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to start password recovery.";
+
+      return sendAuthError(res, 400, message);
+    }
+  });
+
   router.post("/login", async (req, res) => {
     try {
       const fields = validatePasswordFields(req.body ?? {}, false);
@@ -1105,6 +1408,153 @@ export function createAuthRouter(appEnv: AppEnv): Router {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unable to resend code.";
+
+      return sendAuthError(res, 400, message);
+    }
+  });
+
+  router.post("/forgot-password/resend", async (req, res) => {
+    try {
+      const pendingUser = await findPendingPasswordResetUser(appEnv, req);
+
+      if (!pendingUser) {
+        return sendAuthError(
+          res,
+          400,
+          "Your password reset session expired. Please start again.",
+        );
+      }
+
+      if (
+        pendingUser.password_reset_sent_at &&
+        Date.now() -
+          parseDatabaseTimestampMillis(pendingUser.password_reset_sent_at) <
+          appEnv.auth.verificationResendCooldownSeconds * 1000
+      ) {
+        return sendAuthError(
+          res,
+          429,
+          "Please wait a moment before requesting another code.",
+        );
+      }
+
+      const challenge = await issuePasswordResetChallenge(
+        appEnv,
+        {
+          id: pendingUser.id,
+          email: pendingUser.email,
+          name: pendingUser.name,
+        },
+        res,
+      );
+
+      return res.json({
+        ok: true,
+        deliveryStatus: challenge.deliveryStatus,
+        message: challenge.message,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to resend password reset code.";
+
+      return sendAuthError(res, 400, message);
+    }
+  });
+
+  router.post("/forgot-password/confirm", async (req, res) => {
+    try {
+      const pendingUser = await findPendingPasswordResetUser(appEnv, req);
+
+      if (!pendingUser) {
+        return sendAuthError(
+          res,
+          400,
+          "Your password reset session expired. Please start again.",
+        );
+      }
+
+      if (!pendingUser.password_reset_code_hash) {
+        return sendAuthError(
+          res,
+          400,
+          "Your reset code expired. Please request a new code.",
+        );
+      }
+
+        if (isPasswordResetExpired(pendingUser)) {
+        return sendAuthError(
+          res,
+          400,
+          "Your reset code expired. Please request a new code.",
+        );
+      }
+
+      const code = String(req.body?.code ?? "").trim();
+
+      if (!code || code.length !== appEnv.auth.verificationCodeLength) {
+        return sendAuthError(res, 400, "Please enter the full reset code.");
+      }
+
+      if (sha256(code) !== pendingUser.password_reset_code_hash) {
+        return sendAuthError(res, 400, "That code is incorrect. Please try again.");
+      }
+
+      const pendingToken = readPendingPasswordResetToken(req, appEnv);
+
+      if (!pendingToken) {
+        return sendAuthError(
+          res,
+          400,
+          "Your password reset session expired. Please start again.",
+        );
+      }
+
+      setPendingPasswordResetConfirmedCookie(res, appEnv, pendingToken);
+
+      return res.json({
+        ok: true,
+        message: "Code confirmed. You can now choose a new password.",
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to verify the reset code.";
+
+      return sendAuthError(res, 400, message);
+    }
+  });
+
+  router.post("/reset-password", async (req, res) => {
+    try {
+      const pendingUser = await findPendingPasswordResetUser(appEnv, req);
+
+      if (!pendingUser) {
+        return sendAuthError(
+          res,
+          400,
+          "Your password reset session expired. Please start again.",
+        );
+      }
+
+      const password = String(req.body?.password ?? "");
+
+      if (password.length < 8) {
+        return sendAuthError(res, 400, "Password must be at least 8 characters long.");
+      }
+
+      if (!hasConfirmedPasswordReset(appEnv, req)) {
+        return sendAuthError(
+          res,
+          400,
+          "Please confirm the reset code before choosing a new password.",
+        );
+      }
+
+      const user = await completePasswordReset(appEnv, res, pendingUser, password);
+
+      return res.json({ user });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to reset password.";
 
       return sendAuthError(res, 400, message);
     }
