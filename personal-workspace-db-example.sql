@@ -1,9 +1,9 @@
 -- MySQL script to create the personal-workspace-db database
 -- Works with Aiven MySQL service
 
-CREATE DATABASE IF NOT EXISTS personal-workspace-db;
+CREATE DATABASE IF NOT EXISTS `personal-workspace-db`;
 
-USE personal-workspace-db;
+USE `personal-workspace-db`;
 
 CREATE TABLE IF NOT EXISTS users (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -12,6 +12,11 @@ CREATE TABLE IF NOT EXISTS users (
     name VARCHAR(255) NOT NULL,
     password_hash VARCHAR(255) NULL,
     avatar_url VARCHAR(512) NULL,
+    email_verified_at TIMESTAMP NULL DEFAULT NULL,
+    email_verification_token_hash CHAR(64) NULL,
+    email_verification_code_hash CHAR(64) NULL,
+    email_verification_expires_at DATETIME NULL DEFAULT NULL,
+    email_verification_sent_at TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),

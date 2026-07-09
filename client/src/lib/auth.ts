@@ -5,8 +5,30 @@ export type SessionUser = {
   avatarUrl: string | null;
 };
 
+export type SignupResult =
+  | {
+      requiresVerification: false;
+      user: SessionUser;
+    }
+  | {
+      requiresVerification: true;
+      email: string;
+      message: string;
+      deliveryStatus: "sent" | "failed";
+    };
+
 type AuthSuccessResponse = {
   user: SessionUser;
+};
+
+type VerifyOtpSuccessResponse = {
+  user: SessionUser;
+};
+
+type VerificationResponse = {
+  ok: true;
+  message: string;
+  deliveryStatus: "sent" | "failed";
 };
 
 type AuthErrorResponse = {
@@ -84,13 +106,27 @@ export async function signupWithPassword(
   email: string,
   password: string,
 ) {
-  const data = await requestJson<AuthSuccessResponse>("/auth/signup", {
+  const data = await requestJson<SignupResult>("/auth/signup", {
     name,
     email,
     password,
   });
 
+  return data;
+}
+
+export async function verifyOtp(code: string) {
+  const data = await requestJson<VerifyOtpSuccessResponse>("/auth/verify-otp", {
+    code,
+  });
+
   return data.user;
+}
+
+export async function resendOtp() {
+  const data = await requestJson<VerificationResponse>("/auth/resend-otp", {});
+
+  return data;
 }
 
 export async function fetchCurrentUser(): Promise<SessionUser> {

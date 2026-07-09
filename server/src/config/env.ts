@@ -13,15 +13,26 @@ export type AuthConfig = {
   googleRedirectUri?: string;
   sessionCookieName: string;
   stateCookieName: string;
+  pendingVerificationCookieName: string;
   sessionDurationDays: number;
   cookieSecure: boolean;
+  verificationCodeLength: number;
+  verificationCodeExpiryMinutes: number;
+  verificationResendCooldownSeconds: number;
   enabled: boolean;
+};
+
+export type MailConfig = {
+  apiKey: string;
+  fromEmail: string;
+  fromName: string;
 };
 
 export type AppEnv = {
   port: number;
   frontendUrl: string;
   auth: AuthConfig;
+  mail: MailConfig;
   mysql: {
     host: string;
     port: number;
@@ -84,6 +95,22 @@ function parseInteger(value: string | undefined, fallback: number): number {
   return parsed;
 }
 
+function validateBrevoApiKey(value: string): string {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    throw new Error("Missing mail API key. Set BREVO_API_KEY to your Brevo API key.");
+  }
+
+  if (trimmed.startsWith("xsmtpsib-")) {
+    throw new Error(
+      "BREVO_API_KEY looks like a Brevo SMTP relay key (xsmtpsib-...). This project sends through the Brevo API, so you need the Brevo API key instead.",
+    );
+  }
+
+  return trimmed;
+}
+
 function buildSslConfig(): SslConfig | undefined {
   const sslMode = (process.env.MYSQL_SSL_MODE ?? "disabled").toLowerCase();
 
@@ -134,6 +161,8 @@ export function getAppEnv(): AppEnv {
   const googleClientId = getOptionalEnv("GOOGLE_CLIENT_ID");
   const googleClientSecret = getOptionalEnv("GOOGLE_CLIENT_SECRET");
   const googleRedirectUri = getOptionalEnv("GOOGLE_REDIRECT_URI");
+  const mailApiKey = getOptionalEnv("BREVO_API_KEY");
+  const mailFromEmail = getOptionalEnv("BREVO_FROM_EMAIL");
 
   return {
     port: parsePort(process.env.PORT, 3000),
@@ -147,6 +176,9 @@ export function getAppEnv(): AppEnv {
         getOptionalEnv("AUTH_SESSION_COOKIE_NAME") ?? "workspace_session",
       stateCookieName:
         getOptionalEnv("AUTH_STATE_COOKIE_NAME") ?? "workspace_oauth_state",
+      pendingVerificationCookieName:
+        getOptionalEnv("AUTH_PENDING_VERIFICATION_COOKIE_NAME") ??
+        "workspace_pending_verification",
       sessionDurationDays: parseInteger(
         process.env.AUTH_SESSION_DURATION_DAYS,
         30,
@@ -155,9 +187,39 @@ export function getAppEnv(): AppEnv {
         process.env.AUTH_COOKIE_SECURE,
         process.env.NODE_ENV === "production",
       ),
+      verificationCodeLength: parseInteger(
+        process.env.AUTH_OTP_CODE_LENGTH,
+        6,
+      ),
+      verificationCodeExpiryMinutes: parseInteger(
+        process.env.AUTH_OTP_EXPIRES_MINUTES,
+        10,
+      ),
+      verificationResendCooldownSeconds: parseInteger(
+        process.env.AUTH_OTP_RESEND_COOLDOWN_SECONDS,
+        60,
+      ),
       enabled: Boolean(
         googleClientId && googleClientSecret && googleRedirectUri,
       ),
+    },
+    mail: {
+      apiKey: validateBrevoApiKey(
+        mailApiKey ??
+          (() => {
+            throw new Error(
+              "Missing mail API key. Set BREVO_API_KEY to your Brevo API key.",
+            );
+          })(),
+      ),
+      fromEmail:
+        mailFromEmail ??
+        (() => {
+          throw new Error(
+            "Missing mail sender email. Set BREVO_FROM_EMAIL to a Brevo-verified sender.",
+          );
+        })(),
+      fromName: getOptionalEnv("MAIL_FROM_NAME") ?? "Workspace",
     },
     mysql: {
       host: getRequiredEnv("MYSQL_HOST"),

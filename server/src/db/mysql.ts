@@ -9,6 +9,8 @@ export const pool = mysql.createPool({
   user: appEnv.mysql.user,
   password: appEnv.mysql.password,
   database: appEnv.mysql.database,
+  dateStrings: true,
+  timezone: "Z",
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
@@ -24,6 +26,11 @@ export async function initializeAuthSchema() {
       name VARCHAR(255) NOT NULL,
       password_hash VARCHAR(255) NULL,
       avatar_url VARCHAR(512) NULL,
+      email_verified_at TIMESTAMP NULL DEFAULT NULL,
+      email_verification_token_hash CHAR(64) NULL,
+      email_verification_code_hash CHAR(64) NULL,
+      email_verification_expires_at DATETIME NULL DEFAULT NULL,
+      email_verification_sent_at TIMESTAMP NULL DEFAULT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
@@ -42,11 +49,55 @@ export async function initializeAuthSchema() {
   )) as [Array<{ COLUMN_NAME: string }>, unknown];
 
   const columns = new Set(columnRows.map((row) => row.COLUMN_NAME));
+  const emailVerifiedAtWasMissing = !columns.has("email_verified_at");
 
   if (!columns.has("password_hash")) {
     await pool.execute(`
       ALTER TABLE users
       ADD COLUMN password_hash VARCHAR(255) NULL AFTER name
+    `);
+  }
+
+  if (!columns.has("email_verified_at")) {
+    await pool.execute(`
+      ALTER TABLE users
+      ADD COLUMN email_verified_at TIMESTAMP NULL DEFAULT NULL AFTER avatar_url
+    `);
+  }
+
+  if (!columns.has("email_verification_token_hash")) {
+    await pool.execute(`
+      ALTER TABLE users
+      ADD COLUMN email_verification_token_hash CHAR(64) NULL AFTER email_verified_at
+    `);
+  }
+
+  if (!columns.has("email_verification_code_hash")) {
+    await pool.execute(`
+      ALTER TABLE users
+      ADD COLUMN email_verification_code_hash CHAR(64) NULL AFTER email_verification_token_hash
+    `);
+  }
+
+  if (!columns.has("email_verification_expires_at")) {
+    await pool.execute(`
+      ALTER TABLE users
+      ADD COLUMN email_verification_expires_at DATETIME NULL DEFAULT NULL AFTER email_verification_code_hash
+    `);
+  }
+
+  if (!columns.has("email_verification_sent_at")) {
+    await pool.execute(`
+      ALTER TABLE users
+      ADD COLUMN email_verification_sent_at TIMESTAMP NULL DEFAULT NULL AFTER email_verification_expires_at
+    `);
+  }
+
+  if (emailVerifiedAtWasMissing) {
+    await pool.execute(`
+      UPDATE users
+      SET email_verified_at = created_at
+      WHERE email_verified_at IS NULL
     `);
   }
 

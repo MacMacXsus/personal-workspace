@@ -101,7 +101,16 @@ function SignupPage() {
                 setIsSubmitting(true);
 
                 try {
-                  await signupWithPassword(name, email, password);
+                  const result = await signupWithPassword(name, email, password);
+
+                  if (result.requiresVerification) {
+                    navigate(
+                      `/verify-otp?email=${encodeURIComponent(result.email)}&delivery=${result.deliveryStatus}`,
+                      { replace: true },
+                    );
+                    return;
+                  }
+
                   navigate("/dashboard", { replace: true });
                 } catch (error) {
                   setSubmitError(

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { BrevoClient, BrevoError } from "@getbrevo/brevo";
 import { Router, type Request, type Response } from "express";
 import type { AppEnv } from "../config/env";
 import { pool } from "../db/mysql";
@@ -25,6 +26,11 @@ type UserRow = {
   name: string;
   password_hash: string | null;
   avatar_url: string | null;
+  email_verified_at: Date | string | null;
+  email_verification_token_hash: string | null;
+  email_verification_code_hash: string | null;
+  email_verification_expires_at: Date | string | null;
+  email_verification_sent_at: Date | string | null;
 };
 
 type PasswordFields = {
@@ -33,10 +39,23 @@ type PasswordFields = {
   password: string;
 };
 
+type SignupResponse =
+  | {
+      requiresVerification: false;
+      user: AuthUser;
+    }
+  | {
+      requiresVerification: true;
+      email: string;
+      message: string;
+      deliveryStatus: "sent" | "failed";
+    };
+
 const PBKDF2_ITERATIONS = 120_000;
 const PBKDF2_KEY_LENGTH = 32;
 const PBKDF2_DIGEST = "sha256";
 const PASSWORD_HASH_PREFIX = "pbkdf2";
+const VERIFICATION_ROUTE = "/verify-otp";
 
 function randomToken(bytes = 32): string {
   return crypto.randomBytes(bytes).toString("hex");
@@ -145,6 +164,13 @@ function sendAuthError(res: Response, status: number, message: string) {
   return res.status(status).json({ error: message });
 }
 
+function generateOtpCode(length: number): string {
+  const max = 10 ** length;
+  const value = crypto.randomInt(0, max);
+
+  return value.toString().padStart(length, "0");
+}
+
 function buildGoogleAuthUrl(appEnv: AppEnv, state: string): string {
   if (!appEnv.auth.googleClientId || !appEnv.auth.googleRedirectUri) {
     throw new Error("Google OAuth is not configured.");
@@ -160,6 +186,98 @@ function buildGoogleAuthUrl(appEnv: AppEnv, state: string): string {
   authUrl.searchParams.set("prompt", "select_account");
 
   return authUrl.toString();
+}
+
+function buildVerificationUrl(
+  appEnv: AppEnv,
+  email: string,
+  deliveryStatus?: "sent" | "failed",
+): string {
+  const url = new URL(VERIFICATION_ROUTE, appEnv.auth.frontendUrl);
+
+  url.searchParams.set("email", email);
+  if (deliveryStatus) {
+    url.searchParams.set("delivery", deliveryStatus);
+  }
+
+  return url.toString();
+}
+
+function buildVerificationEmailMessage(
+  appEnv: AppEnv,
+  email: string,
+  code: string,
+): {
+  subject: string;
+  htmlContent: string;
+} {
+  const subject = "Your Workspace verification code";
+  const expiryMinutes = appEnv.auth.verificationCodeExpiryMinutes;
+
+  return {
+    subject,
+    htmlContent: `
+      <div style="font-family: Inter, Arial, sans-serif; color: #111827; line-height: 1.6;">
+        <h2 style="margin: 0 0 12px; font-size: 24px;">Verify your Workspace account</h2>
+        <p style="margin: 0 0 16px;">Use this code to finish creating your Workspace account for <strong>${email}</strong>.</p>
+        <div style="display: inline-block; padding: 16px 22px; border-radius: 14px; background: #111827; color: #f9fafb; font-size: 28px; letter-spacing: 0.28em; font-weight: 700;">
+          ${code}
+        </div>
+        <p style="margin: 16px 0 0;">This code expires in <strong>${expiryMinutes} minutes</strong>.</p>
+        <p style="margin: 8px 0 0; color: #6b7280;">If you did not request this, you can ignore this email.</p>
+      </div>
+    `,
+  };
+}
+
+async function sendBrevoEmail(
+  appEnv: AppEnv,
+  toEmail: string,
+  toName: string,
+  payload: {
+    subject: string;
+    htmlContent: string;
+  },
+) {
+  const brevo = new BrevoClient({
+    apiKey: appEnv.mail.apiKey,
+  });
+
+  try {
+    await brevo.transactionalEmails.sendTransacEmail({
+      sender: {
+        name: appEnv.mail.fromName,
+        email: appEnv.mail.fromEmail,
+      },
+      to: [
+        {
+          email: toEmail,
+          name: toName,
+        },
+      ],
+      subject: payload.subject,
+      htmlContent: payload.htmlContent,
+    });
+  } catch (error) {
+    throw new Error(formatBrevoEmailError(error));
+  }
+}
+
+function formatBrevoEmailError(error: unknown): string {
+  if (error instanceof BrevoError) {
+    const body = error.body;
+    const bodyMessage =
+      body &&
+      typeof body === "object" &&
+      "message" in body &&
+      typeof body.message === "string"
+        ? body.message
+        : undefined;
+
+    return bodyMessage ?? error.message;
+  }
+
+  return error instanceof Error ? error.message : "Unknown Brevo API error";
 }
 
 function toAuthUser(row: {
@@ -242,6 +360,162 @@ async function verifyPassword(password: string, storedHash: string): Promise<boo
     derivedKey.length === expected.length &&
     crypto.timingSafeEqual(derivedKey, expected)
   );
+}
+
+function isVerificationPending(row: Pick<UserRow, "email_verified_at">): boolean {
+  return row.email_verified_at === null;
+}
+
+function isVerificationExpired(
+  row: Pick<UserRow, "email_verification_expires_at">,
+): boolean {
+  if (!row.email_verification_expires_at) {
+    return true;
+  }
+
+  return parseDatabaseTimestampMillis(row.email_verification_expires_at) <= Date.now();
+}
+
+function parseDatabaseTimestampMillis(value: Date | string): number {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  const normalized = value.includes("T")
+    ? value
+    : value.replace(" ", "T");
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+  const parsed = new Date(hasTimezone ? normalized : `${normalized}Z`).getTime();
+
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function setPendingVerificationCookie(
+  res: Response,
+  appEnv: AppEnv,
+  token: string,
+) {
+  setCookie(res, appEnv.auth.pendingVerificationCookieName, token, {
+    path: "/auth",
+    maxAgeSeconds: appEnv.auth.verificationCodeExpiryMinutes * 60,
+    httpOnly: true,
+    secure: appEnv.auth.cookieSecure,
+    sameSite: "lax",
+  });
+}
+
+function clearPendingVerificationCookie(res: Response, appEnv: AppEnv) {
+  clearCookie(res, appEnv.auth.pendingVerificationCookieName, {
+    path: "/auth",
+    secure: appEnv.auth.cookieSecure,
+    sameSite: "lax",
+  });
+}
+
+async function sendVerificationChallengeEmail(
+  appEnv: AppEnv,
+  user: { email: string; name: string },
+  code: string,
+) {
+  const emailMessage = buildVerificationEmailMessage(appEnv, user.email, code);
+
+  await sendBrevoEmail(appEnv, user.email, user.name, emailMessage);
+}
+
+async function issueVerificationChallenge(
+  appEnv: AppEnv,
+  user: { id: number; email: string; name: string },
+  res: Response,
+): Promise<{ deliveryStatus: "sent" | "failed"; message: string }> {
+  const token = randomToken(32);
+  const code = generateOtpCode(appEnv.auth.verificationCodeLength);
+  const tokenHash = sha256(token);
+  const codeHash = sha256(code);
+
+  await pool.execute(
+    `
+      UPDATE users
+      SET email_verification_token_hash = ?,
+          email_verification_code_hash = ?,
+          email_verification_expires_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE),
+          email_verification_sent_at = UTC_TIMESTAMP()
+      WHERE id = ?
+    `,
+    [tokenHash, codeHash, appEnv.auth.verificationCodeExpiryMinutes, user.id],
+  );
+
+  setPendingVerificationCookie(res, appEnv, token);
+
+  try {
+    await sendVerificationChallengeEmail(appEnv, user, code);
+
+    return {
+      deliveryStatus: "sent",
+      message: `We sent a verification code to ${user.email}.`,
+    };
+  } catch (error) {
+    const details =
+      error instanceof Error ? error.message : "Unknown email delivery failure";
+
+    return {
+      deliveryStatus: "failed",
+      message: `We prepared your verification code, but the email could not be sent right now. ${details}`,
+    };
+  }
+}
+
+async function findPendingVerificationUser(appEnv: AppEnv, req: Request) {
+  const pendingToken = readCookie(req, appEnv.auth.pendingVerificationCookieName);
+
+  if (!pendingToken) {
+    return null;
+  }
+
+  const pendingTokenHash = sha256(pendingToken);
+
+  const [rows] = (await pool.execute(
+    `
+      SELECT id, google_sub, email, name, password_hash, avatar_url,
+             email_verified_at, email_verification_token_hash,
+             email_verification_code_hash, email_verification_expires_at,
+             email_verification_sent_at
+      FROM users
+      WHERE email_verification_token_hash = ?
+      LIMIT 1
+    `,
+    [pendingTokenHash],
+  )) as [UserRow[], unknown];
+
+  return rows[0] ?? null;
+}
+
+async function completeVerification(
+  appEnv: AppEnv,
+  res: Response,
+  user: UserRow,
+): Promise<AuthUser> {
+  await pool.execute(
+    `
+      UPDATE users
+      SET email_verified_at = UTC_TIMESTAMP(),
+          email_verification_token_hash = NULL,
+          email_verification_code_hash = NULL,
+          email_verification_expires_at = NULL,
+          email_verification_sent_at = NULL
+      WHERE id = ?
+    `,
+    [user.id],
+  );
+
+  clearPendingVerificationCookie(res, appEnv);
+  await attachSession(res, appEnv, user.id);
+
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    avatarUrl: user.avatar_url,
+  };
 }
 
 async function exchangeCodeForTokens(appEnv: AppEnv, code: string) {
@@ -344,8 +618,9 @@ async function findUserFromSession(
         FROM sessions
         WHERE session_token_hash = ?
           AND expires_at > UTC_TIMESTAMP()
-        LIMIT 1
+          LIMIT 1
       )
+      AND email_verified_at IS NOT NULL
       LIMIT 1
     `,
     [sessionTokenHash],
@@ -368,10 +643,13 @@ async function findUserFromSession(
   return toAuthUser(user);
 }
 
-async function upsertGoogleUser(profile: GoogleUserInfo): Promise<AuthUser> {
+async function upsertGoogleUser(profile: GoogleUserInfo): Promise<UserRow> {
   const [rows] = (await pool.execute(
     `
-      SELECT id, google_sub, email, name, password_hash, avatar_url
+      SELECT id, google_sub, email, name, password_hash, avatar_url,
+             email_verified_at, email_verification_token_hash,
+             email_verification_code_hash, email_verification_expires_at,
+             email_verification_sent_at
       FROM users
       WHERE google_sub = ? OR email = ?
       LIMIT 1
@@ -381,48 +659,74 @@ async function upsertGoogleUser(profile: GoogleUserInfo): Promise<AuthUser> {
 
   const existingUser = rows[0];
   const avatarUrl = profile.picture ?? null;
+  const verifiedAt = new Date();
 
   if (existingUser) {
     await pool.execute(
       `
         UPDATE users
-        SET google_sub = ?, email = ?, name = ?, avatar_url = ?
+        SET google_sub = ?, email = ?, name = ?, avatar_url = ?, email_verified_at = ?
         WHERE id = ?
       `,
-      [profile.sub, profile.email, profile.name, avatarUrl, existingUser.id],
+      [profile.sub, profile.email, profile.name, avatarUrl, verifiedAt, existingUser.id],
     );
 
     return {
       id: existingUser.id,
-      name: profile.name,
+      google_sub: profile.sub,
       email: profile.email,
-      avatarUrl,
+      name: profile.name,
+      password_hash: existingUser.password_hash,
+      avatar_url: avatarUrl,
+      email_verified_at: verifiedAt,
+      email_verification_token_hash: existingUser.email_verification_token_hash,
+      email_verification_code_hash: existingUser.email_verification_code_hash,
+      email_verification_expires_at:
+        existingUser.email_verification_expires_at,
+      email_verification_sent_at: existingUser.email_verification_sent_at,
     };
   }
 
   const [result] = (await pool.execute(
     `
-      INSERT INTO users (google_sub, email, name, password_hash, avatar_url)
-      VALUES (?, ?, ?, NULL, ?)
+      INSERT INTO users (
+        google_sub,
+        email,
+        name,
+        password_hash,
+        avatar_url,
+        email_verified_at
+      )
+      VALUES (?, ?, ?, NULL, ?, ?)
     `,
-    [profile.sub, profile.email, profile.name, avatarUrl],
+    [profile.sub, profile.email, profile.name, avatarUrl, verifiedAt],
   )) as [{ insertId: number }, unknown];
 
   return {
     id: Number(result.insertId),
+    google_sub: profile.sub,
     name: profile.name,
     email: profile.email,
-    avatarUrl,
+    password_hash: null,
+    avatar_url: avatarUrl,
+    email_verified_at: verifiedAt,
+    email_verification_token_hash: null,
+    email_verification_code_hash: null,
+    email_verification_expires_at: null,
+    email_verification_sent_at: null,
   };
 }
 
-async function signupPasswordUser(fields: PasswordFields): Promise<AuthUser> {
+async function signupPasswordUser(fields: PasswordFields): Promise<UserRow> {
   const email = normalizeEmail(fields.email);
   const passwordHash = await hashPassword(fields.password);
 
   const [rows] = (await pool.execute(
     `
-      SELECT id, google_sub, email, name, password_hash, avatar_url
+      SELECT id, google_sub, email, name, password_hash, avatar_url,
+             email_verified_at, email_verification_token_hash,
+             email_verification_code_hash, email_verification_expires_at,
+             email_verification_sent_at
       FROM users
       WHERE email = ?
       LIMIT 1
@@ -433,7 +737,7 @@ async function signupPasswordUser(fields: PasswordFields): Promise<AuthUser> {
   const existingUser = rows[0];
 
   if (existingUser) {
-    if (existingUser.password_hash) {
+    if (existingUser.password_hash && existingUser.email_verified_at !== null) {
       throw new Error("An account with this email already exists.");
     }
 
@@ -450,32 +754,59 @@ async function signupPasswordUser(fields: PasswordFields): Promise<AuthUser> {
 
     return {
       id: existingUser.id,
+      google_sub: existingUser.google_sub,
       name,
       email: existingUser.email,
-      avatarUrl: existingUser.avatar_url,
+      password_hash: passwordHash,
+      avatar_url: existingUser.avatar_url,
+      email_verified_at: existingUser.email_verified_at,
+      email_verification_token_hash:
+        existingUser.email_verification_token_hash,
+      email_verification_code_hash:
+        existingUser.email_verification_code_hash,
+      email_verification_expires_at:
+        existingUser.email_verification_expires_at,
+      email_verification_sent_at: existingUser.email_verification_sent_at,
     };
   }
 
   const [result] = (await pool.execute(
     `
-      INSERT INTO users (google_sub, email, name, password_hash, avatar_url)
-      VALUES (NULL, ?, ?, ?, NULL)
+      INSERT INTO users (
+        google_sub,
+        email,
+        name,
+        password_hash,
+        avatar_url,
+        email_verified_at
+      )
+      VALUES (NULL, ?, ?, ?, NULL, NULL)
     `,
     [email, fields.name.trim(), passwordHash],
   )) as [{ insertId: number }, unknown];
 
   return {
     id: Number(result.insertId),
+    google_sub: null,
     name: fields.name.trim(),
     email,
-    avatarUrl: null,
+    password_hash: passwordHash,
+    avatar_url: null,
+    email_verified_at: null,
+    email_verification_token_hash: null,
+    email_verification_code_hash: null,
+    email_verification_expires_at: null,
+    email_verification_sent_at: null,
   };
 }
 
-async function loginPasswordUser(email: string, password: string): Promise<AuthUser> {
+async function loginPasswordUser(email: string, password: string): Promise<UserRow> {
   const [rows] = (await pool.execute(
     `
-      SELECT id, google_sub, email, name, password_hash, avatar_url
+      SELECT id, google_sub, email, name, password_hash, avatar_url,
+             email_verified_at, email_verification_token_hash,
+             email_verification_code_hash, email_verification_expires_at,
+             email_verification_sent_at
       FROM users
       WHERE email = ?
       LIMIT 1
@@ -493,18 +824,17 @@ async function loginPasswordUser(email: string, password: string): Promise<AuthU
     throw new Error("This account uses Google sign-in. Try Google login instead.");
   }
 
+  if (user.email_verified_at === null) {
+    throw new Error("Please verify your email before signing in.");
+  }
+
   const isValid = await verifyPassword(password, user.password_hash);
 
   if (!isValid) {
     throw new Error("Invalid email or password.");
   }
 
-  return toAuthUser({
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    avatar_url: user.avatar_url,
-  });
+  return user;
 }
 
 function authUnavailableMessage(appEnv: AppEnv): string {
@@ -612,6 +942,7 @@ export function createAuthRouter(appEnv: AppEnv): Router {
     }
 
     const user = await upsertGoogleUser(profile);
+
     await attachSession(res, appEnv, user.id);
 
     return res.redirect(new URL("/dashboard", appEnv.auth.frontendUrl).toString());
@@ -622,9 +953,31 @@ export function createAuthRouter(appEnv: AppEnv): Router {
       const fields = validatePasswordFields(req.body ?? {}, true);
       const user = await signupPasswordUser(fields);
 
-      await attachSession(res, appEnv, user.id);
+      if (!isVerificationPending(user)) {
+        await attachSession(res, appEnv, user.id);
 
-      return res.status(201).json({ user });
+        return res.status(201).json({
+          requiresVerification: false,
+          user: toAuthUser(user),
+        } satisfies SignupResponse);
+      }
+
+      const challenge = await issueVerificationChallenge(
+        appEnv,
+        {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+        },
+        res,
+      );
+
+      return res.status(202).json({
+        requiresVerification: true,
+        email: user.email,
+        message: challenge.message,
+        deliveryStatus: challenge.deliveryStatus,
+      } satisfies SignupResponse);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unable to create account.";
@@ -640,12 +993,120 @@ export function createAuthRouter(appEnv: AppEnv): Router {
 
       await attachSession(res, appEnv, user.id);
 
-      return res.json({ user });
+      return res.json({
+        user: toAuthUser(user),
+      });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unable to sign in.";
 
-      return sendAuthError(res, 401, message);
+      const status =
+        error instanceof Error && error.message === "Please verify your email before signing in."
+          ? 403
+          : 401;
+
+      return sendAuthError(res, status, message);
+    }
+  });
+
+  router.post("/verify-otp", async (req, res) => {
+    try {
+      const pendingUser = await findPendingVerificationUser(appEnv, req);
+
+      if (!pendingUser) {
+        return sendAuthError(
+          res,
+          400,
+          "Your verification session expired. Please request a new code.",
+        );
+      }
+
+      if (!pendingUser.email_verification_code_hash) {
+        return sendAuthError(
+          res,
+          400,
+          "Your verification code expired. Please request a new code.",
+        );
+      }
+
+      const code = String(req.body?.code ?? "").trim();
+
+      if (!code || code.length !== appEnv.auth.verificationCodeLength) {
+        return sendAuthError(res, 400, "Please enter the full verification code.");
+      }
+
+      if (isVerificationExpired(pendingUser)) {
+        return sendAuthError(
+          res,
+          400,
+          "Your verification code expired. Please request a new code.",
+        );
+      }
+
+      if (sha256(code) !== pendingUser.email_verification_code_hash) {
+        return sendAuthError(res, 400, "That code is incorrect. Please try again.");
+      }
+
+      const user = await completeVerification(appEnv, res, pendingUser);
+
+      return res.json({ user });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to verify account.";
+
+      return sendAuthError(res, 400, message);
+    }
+  });
+
+  router.post("/resend-otp", async (req, res) => {
+    try {
+      const pendingUser = await findPendingVerificationUser(appEnv, req);
+
+      if (!pendingUser) {
+        return sendAuthError(
+          res,
+          400,
+          "Your verification session expired. Please sign up again.",
+        );
+      }
+
+      if (!isVerificationPending(pendingUser)) {
+        return sendAuthError(res, 400, "Your account is already verified.");
+      }
+
+      if (
+        pendingUser.email_verification_sent_at &&
+        Date.now() -
+          parseDatabaseTimestampMillis(pendingUser.email_verification_sent_at) <
+          appEnv.auth.verificationResendCooldownSeconds * 1000
+      ) {
+        return sendAuthError(
+          res,
+          429,
+          "Please wait a moment before requesting another code.",
+        );
+      }
+
+      const challenge = await issueVerificationChallenge(
+        appEnv,
+        {
+          id: pendingUser.id,
+          email: pendingUser.email,
+          name: pendingUser.name,
+        },
+        res,
+      );
+
+      return res.json({
+        ok: true,
+        deliveryStatus: challenge.deliveryStatus,
+        message: challenge.message,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to resend code.";
+
+      return sendAuthError(res, 400, message);
     }
   });
 
@@ -674,6 +1135,8 @@ export function createAuthRouter(appEnv: AppEnv): Router {
       secure: appEnv.auth.cookieSecure,
       sameSite: "lax",
     });
+
+    clearPendingVerificationCookie(res, appEnv);
 
     return res.json({ ok: true });
   });
