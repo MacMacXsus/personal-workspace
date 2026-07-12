@@ -2,8 +2,13 @@ import "dotenv/config";
 
 import express from "express";
 import { getAppEnv } from "./config/env";
-import { initializeAuthSchema, testDatabaseConnection } from "./db/mysql";
+import {
+  initializeAuthSchema,
+  initializeBookmarkSchema,
+  testDatabaseConnection,
+} from "./db/mysql";
 import { createAuthRouter } from "./auth/google";
+import { createBookmarkRouter } from "./routes/bookmarkRoutes";
 
 const app = express();
 const appEnv = getAppEnv();
@@ -18,7 +23,7 @@ app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
     res.setHeader("Vary", "Origin");
   }
 
@@ -59,10 +64,12 @@ app.get("/db/health", async (_req, res) => {
 });
 
 app.use("/auth", createAuthRouter(appEnv));
+app.use("/bookmarks", createBookmarkRouter(appEnv));
 
 async function bootstrap() {
   await testDatabaseConnection();
   await initializeAuthSchema();
+  await initializeBookmarkSchema();
 
   app.listen(port, () => {
     console.log(`Server running on http://localhost:${port}`);

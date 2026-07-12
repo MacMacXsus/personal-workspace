@@ -149,23 +149,6 @@ export const navItems: Array<{ icon: typeof LayoutDashboard; label: string; id: 
   { icon: Inbox, label: "Inbox", id: "inbox" },
 ];
 
-export const bookmarkFolders = ["All", "Design", "Engineering", "Reading", "Tools", "Research"];
-
-export const initialBookmarks: BookmarkItem[] = [
-  { id: 1, title: "Refactoring UI", url: "refactoringui.com", folder: "Design", tags: ["ui", "design"], favicon: "R", color: "#8b7cf8", pinned: true },
-  { id: 2, title: "Linear - Issue tracker", url: "linear.app", folder: "Tools", tags: ["pm", "productivity"], favicon: "L", color: "#5ecfb0", pinned: true },
-  { id: 3, title: "Shape Up by Basecamp", url: "basecamp.com/shapeup", folder: "Reading", tags: ["product", "process"], favicon: "S", color: "#f5a623", pinned: false },
-  { id: 4, title: "Tailwind CSS docs", url: "tailwindcss.com/docs", folder: "Engineering", tags: ["css", "frontend"], favicon: "T", color: "#7ec8e3", pinned: false },
-  { id: 5, title: "Framer Motion API", url: "motion.dev", folder: "Engineering", tags: ["animation", "react"], favicon: "F", color: "#e05252", pinned: false },
-  { id: 6, title: "Mobbin - UI patterns", url: "mobbin.com", folder: "Design", tags: ["ui", "patterns"], favicon: "M", color: "#8b7cf8", pinned: false },
-  { id: 7, title: "Everything about typography", url: "practicaltypography.com", folder: "Design", tags: ["typography", "design"], favicon: "P", color: "#f5a623", pinned: true },
-  { id: 8, title: "Excalidraw", url: "excalidraw.com", folder: "Tools", tags: ["whiteboard", "diagrams"], favicon: "E", color: "#5ecfb0", pinned: false },
-  { id: 9, title: "Hacker News", url: "news.ycombinator.com", folder: "Research", tags: ["news", "tech"], favicon: "H", color: "#f5a623", pinned: false },
-  { id: 10, title: "React docs - hooks reference", url: "react.dev/reference/hooks", folder: "Engineering", tags: ["react", "frontend"], favicon: "R", color: "#7ec8e3", pinned: false },
-  { id: 11, title: "Stripe API reference", url: "stripe.com/docs/api", folder: "Engineering", tags: ["api", "payments"], favicon: "S", color: "#5ecfb0", pinned: false },
-  { id: 12, title: "The Art of Unix Programming", url: "catb.org/esr/writings/taoup", folder: "Reading", tags: ["systems", "philosophy"], favicon: "U", color: "#6b6b80", pinned: false },
-];
-
 export const tagColors: Record<string, string> = {
   Design: "text-[#8b7cf8] bg-[#8b7cf8]/10",
   Engineering: "text-[#5ecfb0] bg-[#5ecfb0]/10",
