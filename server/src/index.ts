@@ -7,7 +7,7 @@ import {
   initializeBookmarkSchema,
   testDatabaseConnection,
 } from "./db/mysql";
-import { createAuthRouter } from "./auth/google";
+import { createAuthRouter, createVaultAuthRouter } from "./auth/google";
 import { createBookmarkRouter } from "./routes/bookmarkRoutes";
 
 const app = express();
@@ -64,6 +64,7 @@ app.get("/db/health", async (_req, res) => {
 });
 
 app.use("/auth", createAuthRouter(appEnv));
+app.use("/auth/vault", createVaultAuthRouter(appEnv));
 app.use("/bookmarks", createBookmarkRouter(appEnv));
 
 async function bootstrap() {

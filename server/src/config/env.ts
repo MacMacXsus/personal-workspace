@@ -12,11 +12,14 @@ export type AuthConfig = {
   googleClientSecret?: string;
   googleRedirectUri?: string;
   sessionCookieName: string;
+  vaultSessionCookieName: string;
   stateCookieName: string;
+  vaultStateCookieName: string;
   pendingVerificationCookieName: string;
   pendingPasswordResetCookieName: string;
   pendingPasswordResetConfirmedCookieName: string;
   sessionDurationDays: number;
+  vaultSessionDurationDays: number;
   cookieSecure: boolean;
   verificationCodeLength: number;
   verificationCodeExpiryMinutes: number;
@@ -176,8 +179,14 @@ export function getAppEnv(): AppEnv {
       googleRedirectUri,
       sessionCookieName:
         getOptionalEnv("AUTH_SESSION_COOKIE_NAME") ?? "workspace_session",
+      vaultSessionCookieName:
+        getOptionalEnv("AUTH_VAULT_SESSION_COOKIE_NAME") ??
+        "workspace_vault_session",
       stateCookieName:
         getOptionalEnv("AUTH_STATE_COOKIE_NAME") ?? "workspace_oauth_state",
+      vaultStateCookieName:
+        getOptionalEnv("AUTH_VAULT_STATE_COOKIE_NAME") ??
+        "workspace_vault_oauth_state",
       pendingVerificationCookieName:
         getOptionalEnv("AUTH_PENDING_VERIFICATION_COOKIE_NAME") ??
         "workspace_pending_verification",
@@ -190,6 +199,10 @@ export function getAppEnv(): AppEnv {
       sessionDurationDays: parseInteger(
         process.env.AUTH_SESSION_DURATION_DAYS,
         30,
+      ),
+      vaultSessionDurationDays: parseInteger(
+        process.env.AUTH_VAULT_SESSION_DURATION_DAYS,
+        1,
       ),
       cookieSecure: parseBoolean(
         process.env.AUTH_COOKIE_SECURE,

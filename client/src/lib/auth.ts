@@ -75,6 +75,10 @@ export function startGoogleAuth() {
   window.location.assign(buildApiUrl("/auth/google"));
 }
 
+export function startVaultGoogleAuth() {
+  window.location.assign(buildApiUrl("/auth/vault/google"));
+}
+
 async function requestJson<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(buildApiUrl(path), {
     method: "POST",
@@ -110,6 +114,18 @@ async function requestJson<T>(path: string, body: unknown): Promise<T> {
 
 export async function loginWithPassword(email: string, password: string) {
   const data = await requestJson<AuthSuccessResponse>("/auth/login", {
+    email,
+    password,
+  });
+
+  return data.user;
+}
+
+export async function loginWithVaultPassword(
+  email: string,
+  password: string,
+) {
+  const data = await requestJson<AuthSuccessResponse>("/auth/vault/login", {
     email,
     password,
   });
@@ -205,8 +221,33 @@ export async function fetchCurrentUser(): Promise<SessionUser> {
   return data.user;
 }
 
+export async function fetchVaultCurrentUser(): Promise<SessionUser> {
+  const response = await fetch(buildApiUrl("/auth/vault/me"), {
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw new Error("Not authenticated");
+  }
+
+  const data = (await response.json()) as CurrentUserResponse;
+
+  if (!data.user) {
+    throw new Error("Not authenticated");
+  }
+
+  return data.user;
+}
+
 export async function logout() {
   await fetch(buildApiUrl("/auth/logout"), {
+    method: "POST",
+    credentials: "include",
+  });
+}
+
+export async function logoutVault() {
+  await fetch(buildApiUrl("/auth/vault/logout"), {
     method: "POST",
     credentials: "include",
   });

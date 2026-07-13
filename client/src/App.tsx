@@ -9,9 +9,11 @@ import Dashboard from './pages/Dashboard'
 import BookmarksPanel from './pages/dashboard/BookmarksPanel'
 import OverviewPanel from './pages/dashboard/OverviewPanel'
 import Vault from './pages/Vault'
+import type { SessionUser } from './lib/auth'
 
 type DashboardOutletContext = {
   firstName: string
+  currentUser: SessionUser | null
 }
 
 function OverviewRoute() {

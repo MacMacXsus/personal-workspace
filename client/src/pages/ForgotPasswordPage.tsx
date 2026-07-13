@@ -129,8 +129,11 @@ function ForgotPasswordPage() {
                     autoComplete="email"
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
+                    readOnly={isCodeStepVisible}
                     placeholder="you@example.com"
-                    className="h-11 w-full rounded-xl border border-border bg-background/80 pl-10 pr-4 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/20"
+                    className={`h-11 w-full rounded-xl border border-border bg-background/80 pl-10 pr-4 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/20 ${
+                      isCodeStepVisible ? "cursor-not-allowed bg-background/60" : ""
+                    }`}
                   />
                 </div>
               </div>
