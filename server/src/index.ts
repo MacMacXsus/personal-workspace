@@ -5,10 +5,12 @@ import { getAppEnv } from "./config/env";
 import {
   initializeAuthSchema,
   initializeBookmarkSchema,
+  initializeVaultSchema,
   testDatabaseConnection,
 } from "./db/mysql";
 import { createAuthRouter, createVaultAuthRouter } from "./auth/google";
 import { createBookmarkRouter } from "./routes/bookmarkRoutes";
+import { createVaultRouter } from "./routes/vaultRoutes";
 
 const app = express();
 const appEnv = getAppEnv();
@@ -66,11 +68,13 @@ app.get("/db/health", async (_req, res) => {
 app.use("/auth", createAuthRouter(appEnv));
 app.use("/auth/vault", createVaultAuthRouter(appEnv));
 app.use("/bookmarks", createBookmarkRouter(appEnv));
+app.use("/vault", createVaultRouter(appEnv));
 
 async function bootstrap() {
   await testDatabaseConnection();
   await initializeAuthSchema();
   await initializeBookmarkSchema();
+  await initializeVaultSchema();
 
   app.listen(port, () => {
     console.log(`Server running on http://localhost:${port}`);

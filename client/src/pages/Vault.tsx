@@ -11,6 +11,7 @@ import {
   Key,
   Lock,
   Plus,
+  Pencil,
   Search,
   ShieldCheck,
   Trash2,
@@ -25,19 +26,29 @@ import {
   logoutVault,
   startVaultGoogleAuth,
 } from "../lib/auth";
+import {
+  createVaultSecret,
+  deleteVaultSecret,
+  fetchVaultSecrets,
+  updateVaultSecret,
+  type VaultSecretCategory,
+  type VaultSecretRecord,
+} from "../lib/vault";
 
-type Category = "API Key" | "Token" | "Password" | "Secret" | "Note" | "Config";
+type SecretCategory = VaultSecretCategory;
+type FilterCategory = SecretCategory | "All";
 
 interface VaultEntry {
   id: number;
   label: string;
   value: string;
-  category: Category;
+  category: SecretCategory;
   hint?: string;
   createdAt: string;
+  updatedAt: string;
 }
 
-const categoryMeta: Record<Category, { icon: typeof Key; color: string; bg: string }> = {
+const categoryMeta: Record<SecretCategory, { icon: typeof Key; color: string; bg: string }> = {
   "API Key": { icon: Key, color: "#8b7cf8", bg: "bg-[#8b7cf8]/10" },
   Token: { icon: ShieldCheck, color: "#5ecfb0", bg: "bg-[#5ecfb0]/10" },
   Password: { icon: Lock, color: "#e05252", bg: "bg-[#e05252]/10" },
@@ -46,96 +57,13 @@ const categoryMeta: Record<Category, { icon: typeof Key; color: string; bg: stri
   Config: { icon: Database, color: "#6b6b80", bg: "bg-[#a0a0b0]/10" },
 };
 
-const categories: Category[] = [
+const categories: SecretCategory[] = [
   "API Key",
   "Token",
   "Password",
   "Secret",
   "Note",
   "Config",
-];
-
-const seedEntries: VaultEntry[] = [
-  {
-    id: 1,
-    label: "OpenAI API Key",
-    value: "example-key1",
-    category: "API Key",
-    hint: "Personal GPT-4o access",
-    createdAt: "Jul 1, 2025",
-  },
-  {
-    id: 2,
-    label: "GitHub Personal Access Token",
-    value: "example-token2",
-    category: "Token",
-    hint: "Expires Dec 2025",
-    createdAt: "Jun 28, 2025",
-  },
-  {
-    id: 3,
-    label: "Supabase Service Role Key",
-    value: "example-key3",
-    category: "Secret",
-    hint: "Production project",
-    createdAt: "Jun 20, 2025",
-  },
-  {
-    id: 4,
-    label: "Vercel Deploy Token",
-    value: "example-token4",
-    category: "Token",
-    hint: "CI/CD pipeline",
-    createdAt: "Jun 15, 2025",
-  },
-  {
-    id: 5,
-    label: "Stripe Secret Key",
-    value: "example-key5",
-    category: "API Key",
-    hint: "Live mode - handle with care",
-    createdAt: "Jun 10, 2025",
-  },
-  {
-    id: 6,
-    label: "PostgreSQL Password",
-    value: "example-password6",
-    category: "Password",
-    hint: "Prod DB on Supabase",
-    createdAt: "Jun 5, 2025",
-  },
-  {
-    id: 7,
-    label: "SMTP Password",
-    value: "example-password7",
-    category: "Password",
-    hint: "Postmark transactional",
-    createdAt: "May 30, 2025",
-  },
-  {
-    id: 8,
-    label: "JWT Secret",
-    value: "example-secret8",
-    category: "Secret",
-    hint: "Auth service signing key",
-    createdAt: "May 22, 2025",
-  },
-  {
-    id: 9,
-    label: "Cloudflare API Token",
-    value: "example-token9",
-    category: "API Key",
-    hint: "DNS + Pages deployment",
-    createdAt: "May 10, 2025",
-  },
-  {
-    id: 10,
-    label: "Redis Connection URL",
-    value: "example-url10",
-    category: "Config",
-    hint: "Upstash production",
-    createdAt: "May 5, 2025",
-  },
 ];
 
 type DashboardOutletContext = {
@@ -149,6 +77,33 @@ function mask(value: string): string {
   }
 
   return `${value.slice(0, 4)}${"*".repeat(Math.min(value.length - 8, 24))}${value.slice(-4)}`;
+}
+
+function formatVaultDate(value: string): string {
+  const normalized = value.includes("T") ? value : value.replace(" ", "T");
+  const parsed = new Date(normalized.endsWith("Z") ? normalized : `${normalized}Z`);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function toVaultEntry(secret: VaultSecretRecord): VaultEntry {
+  return {
+    id: secret.id,
+    label: secret.label,
+    value: secret.value,
+    category: secret.category,
+    hint: secret.notes ?? undefined,
+    createdAt: formatVaultDate(secret.createdAt),
+    updatedAt: secret.updatedAt,
+  };
 }
 
 function VaultLoadingState() {
@@ -165,26 +120,53 @@ function VaultLoadingState() {
   );
 }
 
+function VaultSecretsLoadingState() {
+  return (
+    <div className="flex min-h-[70vh] items-center justify-center px-4 py-8">
+      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-card/90 p-6 text-center shadow-2xl backdrop-blur-xl sm:p-8">
+        <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+        <p className="text-sm font-medium text-foreground">Loading vault secrets</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          We are fetching your encrypted secrets from the database.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function Vault() {
   const { currentUser } = useOutletContext<DashboardOutletContext>();
   const [locked, setLocked] = useState(true);
   const [vaultEmail, setVaultEmail] = useState("");
   const [vaultPassword, setVaultPassword] = useState("");
   const [showVaultPassword, setShowVaultPassword] = useState(false);
+  const [showEditSecretValue, setShowEditSecretValue] = useState(false);
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [isUnlocking, setIsUnlocking] = useState(false);
   const [isCheckingVaultSession, setIsCheckingVaultSession] = useState(true);
-  const [entries, setEntries] = useState<VaultEntry[]>(seedEntries);
+  const [entries, setEntries] = useState<VaultEntry[]>([]);
+  const [availableCategories, setAvailableCategories] = useState<SecretCategory[]>(categories);
+  const [isLoadingSecrets, setIsLoadingSecrets] = useState(false);
+  const [isSavingSecret, setIsSavingSecret] = useState(false);
+  const [isDeletingSecret, setIsDeletingSecret] = useState(false);
   const [revealed, setRevealed] = useState<Set<number>>(new Set());
   const [copied, setCopied] = useState<number | null>(null);
   const [search, setSearch] = useState("");
-  const [filterCat, setFilterCat] = useState<Category | "All">("All");
+  const [filterCat, setFilterCat] = useState<FilterCategory>("All");
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [editId, setEditId] = useState<number | null>(null);
   const [newEntry, setNewEntry] = useState({
     label: "",
     value: "",
-    category: "API Key" as Category,
+    category: "API Key" as SecretCategory,
+    hint: "",
+  });
+  const [editEntry, setEditEntry] = useState({
+    label: "",
+    value: "",
+    category: "API Key" as SecretCategory,
     hint: "",
   });
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -232,6 +214,57 @@ export default function Vault() {
   }, [locked, isCheckingVaultSession]);
 
   useEffect(() => {
+    if (locked || isCheckingVaultSession) {
+      return;
+    }
+
+    let isActive = true;
+
+    const loadVaultSecrets = async () => {
+      setIsLoadingSecrets(true);
+      setVaultError(null);
+
+      try {
+        const data = await fetchVaultSecrets();
+
+        if (!isActive) {
+          return;
+        }
+
+        setEntries(data.secrets.map(toVaultEntry));
+        setAvailableCategories(data.categories);
+        setRevealed(new Set());
+        setCopied(null);
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+
+        const message =
+          error instanceof Error ? error.message : "Unable to load vault entries.";
+
+        setVaultError(message);
+
+        if (message.toLowerCase().includes("unlock")) {
+          setLocked(true);
+          setVaultPassword("");
+          setShowVaultPassword(false);
+        }
+      } finally {
+        if (isActive) {
+          setIsLoadingSecrets(false);
+        }
+      }
+    };
+
+    void loadVaultSecrets();
+
+    return () => {
+      isActive = false;
+    };
+  }, [isCheckingVaultSession, locked]);
+
+  useEffect(() => {
     if (locked) {
       return;
     }
@@ -242,6 +275,11 @@ export default function Vault() {
         setVaultPassword("");
         setShowVaultPassword(false);
         setVaultError("Your vault session expired. Please reauthenticate.");
+        setEntries([]);
+        setRevealed(new Set());
+        setCopied(null);
+        setEditOpen(false);
+        setEditId(null);
       });
     }, 60_000);
 
@@ -278,35 +316,116 @@ export default function Vault() {
     window.setTimeout(() => setCopied(null), 2000);
   };
 
-  const addEntry = () => {
+  const refreshVaultSecrets = async () => {
+    const data = await fetchVaultSecrets();
+
+    setEntries(data.secrets.map(toVaultEntry));
+    setAvailableCategories(data.categories);
+    setRevealed(new Set());
+    setCopied(null);
+  };
+
+  const openEditEntry = (entry: VaultEntry) => {
+    setAddOpen(false);
+    setEditId(entry.id);
+    setShowEditSecretValue(false);
+    setEditEntry({
+      label: entry.label,
+      value: entry.value,
+      category: entry.category,
+      hint: entry.hint ?? "",
+    });
+    setEditOpen(true);
+  };
+
+  const addEntry = async () => {
     if (!newEntry.label.trim() || !newEntry.value.trim()) {
       return;
     }
 
-    const createdAt = new Date().toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    setIsSavingSecret(true);
+    setVaultError(null);
 
-    setEntries((prev) => [
-      {
-        id: Date.now(),
+    try {
+      await createVaultSecret({
         label: newEntry.label.trim(),
         value: newEntry.value.trim(),
         category: newEntry.category,
-        hint: newEntry.hint.trim() || undefined,
-        createdAt,
-      },
-      ...prev,
-    ]);
-    setNewEntry({ label: "", value: "", category: "API Key", hint: "" });
-    setAddOpen(false);
+        notes: newEntry.hint.trim() || null,
+      });
+
+      await refreshVaultSecrets();
+      setNewEntry({ label: "", value: "", category: "API Key", hint: "" });
+      setAddOpen(false);
+    } catch (error) {
+      setVaultError(
+        error instanceof Error ? error.message : "Unable to save the secret.",
+      );
+    } finally {
+      setIsSavingSecret(false);
+    }
   };
 
-  const deleteEntry = (id: number) => {
-    setEntries((prev) => prev.filter((entry) => entry.id !== id));
-    setDeleteId(null);
+  const saveEditEntry = async () => {
+    if (editId === null || !editEntry.label.trim()) {
+      return;
+    }
+
+    setIsSavingSecret(true);
+    setVaultError(null);
+
+    try {
+      const payload: {
+        label: string;
+        category: SecretCategory;
+        notes: string | null;
+        value?: string;
+      } = {
+        label: editEntry.label.trim(),
+        category: editEntry.category,
+        notes: editEntry.hint.trim() || null,
+      };
+
+      if (showEditSecretValue) {
+        payload.value = editEntry.value.trim();
+      }
+
+      await updateVaultSecret(editId, payload);
+
+      await refreshVaultSecrets();
+      setEditOpen(false);
+      setEditId(null);
+      setShowEditSecretValue(false);
+      setEditEntry({
+        label: "",
+        value: "",
+        category: "API Key",
+        hint: "",
+      });
+    } catch (error) {
+      setVaultError(
+        error instanceof Error ? error.message : "Unable to update the secret.",
+      );
+    } finally {
+      setIsSavingSecret(false);
+    }
+  };
+
+  const deleteEntry = async (id: number) => {
+    setIsDeletingSecret(true);
+    setVaultError(null);
+
+    try {
+      await deleteVaultSecret(id);
+      await refreshVaultSecrets();
+      setDeleteId(null);
+    } catch (error) {
+      setVaultError(
+        error instanceof Error ? error.message : "Unable to delete the secret.",
+      );
+    } finally {
+      setIsDeletingSecret(false);
+    }
   };
 
   const unlockVault = async () => {
@@ -342,6 +461,11 @@ export default function Vault() {
       setVaultPassword("");
       setShowVaultPassword(false);
       setVaultError(null);
+      setEntries([]);
+      setRevealed(new Set());
+      setCopied(null);
+      setEditOpen(false);
+      setEditId(null);
     }
   };
 
@@ -477,6 +601,10 @@ export default function Vault() {
     );
   }
 
+  if (isLoadingSecrets && entries.length === 0) {
+    return <VaultSecretsLoadingState />;
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="mb-5 flex items-center justify-between gap-4">
@@ -506,7 +634,11 @@ export default function Vault() {
             Lock vault
           </button>
           <button
-            onClick={() => setAddOpen(true)}
+            onClick={() => {
+              setEditOpen(false);
+              setEditId(null);
+              setAddOpen(true);
+            }}
             className="flex items-center gap-2 h-8 px-4 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-all duration-150"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -532,7 +664,7 @@ export default function Vault() {
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {(["All", ...categories] as const).map((category) => {
+          {(["All", ...availableCategories] as const).map((category) => {
             const meta = category !== "All" ? categoryMeta[category] : null;
             const Icon = meta?.icon;
 
@@ -563,8 +695,8 @@ export default function Vault() {
       <div className="mb-5 flex items-center gap-2.5 rounded-lg border border-[#f5a623]/20 bg-[#f5a623]/5 px-4 py-2.5">
         <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[#f5a623]" />
         <p className="text-xs text-[#f5a623]/80">
-          Secrets are stored in memory only and will be cleared on page reload.
-          Vault access uses a separate short-lived session.
+          Your secrets are loaded from the database and stay tied to the separate
+          vault session for this panel.
         </p>
       </div>
 
@@ -631,6 +763,14 @@ export default function Vault() {
                   </code>
 
                   <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      onClick={() => openEditEntry(entry)}
+                      type="button"
+                      className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground opacity-0 transition-colors duration-150 hover:text-foreground group-hover:opacity-100"
+                      title="Edit"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
                     <button
                       onClick={() => toggleReveal(entry.id)}
                       type="button"
@@ -737,7 +877,7 @@ export default function Vault() {
                     onChange={(event) =>
                       setNewEntry((current) => ({
                         ...current,
-                        category: event.target.value as Category,
+                        category: event.target.value as SecretCategory,
                       }))
                     }
                   >
@@ -769,7 +909,7 @@ export default function Vault() {
               <div className="flex flex-1 items-center gap-1.5">
                 <Globe className="h-3 w-3 text-muted-foreground/40" />
                 <span className="text-[10px] font-mono text-muted-foreground/40">
-                  Stored in memory only
+                  Stored encrypted in the database
                 </span>
               </div>
               <button
@@ -780,12 +920,165 @@ export default function Vault() {
                 Cancel
               </button>
               <button
-                onClick={addEntry}
+                onClick={() => void addEntry()}
                 type="button"
-                disabled={!newEntry.label || !newEntry.value}
+                disabled={!newEntry.label || !newEntry.value || isSavingSecret}
                 className="h-8 rounded-md bg-primary px-4 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                Save secret
+                {isSavingSecret ? "Saving..." : "Save secret"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editOpen && editId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-primary/20 bg-primary/10">
+                  <Pencil className="h-3.5 w-3.5 text-primary" />
+                </div>
+                <h2
+                  className="text-sm font-semibold text-foreground"
+                  style={{ fontFamily: "'Bricolage Grotesque', sans-serif" }}
+                >
+                  Edit secret
+                </h2>
+              </div>
+              <button
+                onClick={() => {
+                  setEditOpen(false);
+                  setEditId(null);
+                  setShowEditSecretValue(false);
+                }}
+                type="button"
+                className="text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <p className="mb-1.5 text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+                  Label
+                </p>
+                <input
+                  className="h-9 w-full rounded-md border border-border bg-secondary px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/40 focus:border-primary/40"
+                  placeholder="e.g. OpenAI API Key"
+                  value={editEntry.label}
+                  onChange={(event) =>
+                    setEditEntry((current) => ({ ...current, label: event.target.value }))
+                  }
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+                    Secret value
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowEditSecretValue((current) => !current)}
+                    className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                  >
+                    {showEditSecretValue ? (
+                      <>
+                        <EyeOff className="h-3 w-3" />
+                        Hide
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="h-3 w-3" />
+                        Show
+                      </>
+                    )}
+                  </button>
+                </div>
+                <textarea
+                  rows={3}
+                  readOnly={!showEditSecretValue}
+                  className={`w-full resize-none rounded-md border border-border bg-secondary px-3 py-2 text-sm font-mono outline-none transition-colors placeholder:text-muted-foreground/40 focus:border-primary/40 ${
+                    showEditSecretValue
+                      ? "text-foreground"
+                      : "cursor-default text-foreground"
+                  }`}
+                  placeholder="Paste your secret here..."
+                  value={showEditSecretValue ? editEntry.value : mask(editEntry.value)}
+                  onChange={(event) =>
+                    setEditEntry((current) => ({ ...current, value: event.target.value }))
+                  }
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="mb-1.5 text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+                    Category
+                  </p>
+                  <select
+                    className="h-9 w-full rounded-md border border-border bg-secondary px-3 text-sm text-foreground outline-none transition-colors focus:border-primary/40"
+                    value={editEntry.category}
+                    onChange={(event) =>
+                      setEditEntry((current) => ({
+                        ...current,
+                        category: event.target.value as SecretCategory,
+                      }))
+                    }
+                  >
+                    {categories.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <p className="mb-1.5 text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+                    Hint <span className="normal-case tracking-normal opacity-50">(optional)</span>
+                  </p>
+                  <input
+                    className="h-9 w-full rounded-md border border-border bg-secondary px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/40 focus:border-primary/40"
+                    placeholder="e.g. Production only"
+                    value={editEntry.hint}
+                    onChange={(event) =>
+                      setEditEntry((current) => ({ ...current, hint: event.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center gap-2 border-t border-border pt-4">
+              <div className="flex flex-1 items-center gap-1.5">
+                <Globe className="h-3 w-3 text-muted-foreground/40" />
+                <span className="text-[10px] font-mono text-muted-foreground/40">
+                  Updates are encrypted before saving
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  setEditOpen(false);
+                  setEditId(null);
+                  setShowEditSecretValue(false);
+                }}
+                type="button"
+                className="h-8 rounded-md border border-border px-4 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void saveEditEntry()}
+                type="button"
+                disabled={!editEntry.label || !editEntry.value || isSavingSecret}
+                className="h-8 rounded-md bg-primary px-4 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isSavingSecret ? "Saving..." : "Update secret"}
               </button>
             </div>
           </div>
@@ -821,11 +1114,12 @@ export default function Vault() {
                 Cancel
               </button>
               <button
-                onClick={() => deleteEntry(deleteId)}
+                onClick={() => void deleteEntry(deleteId)}
                 type="button"
-                className="h-9 flex-1 rounded-md bg-[#e05252] text-xs font-medium text-white transition-colors hover:bg-[#e05252]/90"
+                disabled={isDeletingSecret}
+                className="h-9 flex-1 rounded-md bg-[#e05252] text-xs font-medium text-white transition-colors hover:bg-[#e05252]/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Delete
+                {isDeletingSecret ? "Deleting..." : "Delete"}
               </button>
             </div>
           </div>
