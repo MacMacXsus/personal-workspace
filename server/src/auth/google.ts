@@ -61,6 +61,12 @@ type SignupResponse =
       deliveryStatus: "sent" | "failed";
     };
 
+type SessionConfig = {
+  cookieName: string;
+  durationDays: number;
+  tableName: string;
+};
+
 const PBKDF2_ITERATIONS = 120_000;
 const PBKDF2_KEY_LENGTH = 32;
 const PBKDF2_DIGEST = "sha256";
@@ -74,6 +80,22 @@ function randomToken(bytes = 32): string {
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function getPrimarySessionConfig(appEnv: AppEnv): SessionConfig {
+  return {
+    cookieName: appEnv.auth.sessionCookieName,
+    durationDays: appEnv.auth.sessionDurationDays,
+    tableName: "sessions",
+  };
+}
+
+function getVaultSessionConfig(appEnv: AppEnv): SessionConfig {
+  return {
+    cookieName: appEnv.auth.vaultSessionCookieName,
+    durationDays: appEnv.auth.vaultSessionDurationDays,
+    tableName: "vault_sessions",
+  };
 }
 
 function normalizeEmail(email: string): string {
@@ -716,6 +738,7 @@ async function completeVerification(
 async function completePasswordReset(
   appEnv: AppEnv,
   res: Response,
+  req: Request,
   user: UserRow,
   password: string,
 ): Promise<AuthUser> {
@@ -735,8 +758,10 @@ async function completePasswordReset(
   );
 
   await pool.execute("DELETE FROM sessions WHERE user_id = ?", [user.id]);
+  await pool.execute("DELETE FROM vault_sessions WHERE user_id = ?", [user.id]);
   clearPendingPasswordResetCookie(res, appEnv);
   clearPendingPasswordResetConfirmedCookie(res, appEnv);
+  await clearSession(res, appEnv, req, getVaultSessionConfig(appEnv));
   await attachSession(res, appEnv, user.id);
 
   return {
@@ -804,20 +829,24 @@ async function fetchGoogleUserInfo(accessToken: string): Promise<GoogleUserInfo>
   return (await response.json()) as GoogleUserInfo;
 }
 
-async function createSession(appEnv: AppEnv, userId: number): Promise<string> {
+async function createSession(
+  appEnv: AppEnv,
+  userId: number,
+  sessionConfig: SessionConfig = getPrimarySessionConfig(appEnv),
+): Promise<string> {
   const sessionToken = randomToken(32);
   const sessionTokenHash = sha256(sessionToken);
   const expiresAt = new Date(
-    Date.now() + appEnv.auth.sessionDurationDays * 24 * 60 * 60 * 1000,
+    Date.now() + sessionConfig.durationDays * 24 * 60 * 60 * 1000,
   );
 
   await pool.execute(
-    "DELETE FROM sessions WHERE expires_at < UTC_TIMESTAMP()",
+    `DELETE FROM ${sessionConfig.tableName} WHERE expires_at < UTC_TIMESTAMP()`,
   );
 
   await pool.execute(
     `
-      INSERT INTO sessions (user_id, session_token_hash, expires_at)
+      INSERT INTO ${sessionConfig.tableName} (user_id, session_token_hash, expires_at)
       VALUES (?, ?, ?)
     `,
     [userId, sessionTokenHash, expiresAt],
@@ -829,8 +858,9 @@ async function createSession(appEnv: AppEnv, userId: number): Promise<string> {
 async function findUserFromSession(
   appEnv: AppEnv,
   req: Request,
+  sessionConfig: SessionConfig = getPrimarySessionConfig(appEnv),
 ): Promise<AuthUser | null> {
-  const sessionToken = readCookie(req, appEnv.auth.sessionCookieName);
+  const sessionToken = readCookie(req, sessionConfig.cookieName);
 
   if (!sessionToken) {
     return null;
@@ -844,10 +874,10 @@ async function findUserFromSession(
       FROM users
       WHERE id = (
         SELECT user_id
-        FROM sessions
+        FROM ${sessionConfig.tableName}
         WHERE session_token_hash = ?
           AND expires_at > UTC_TIMESTAMP()
-          LIMIT 1
+        LIMIT 1
       )
       AND email_verified_at IS NOT NULL
       LIMIT 1
@@ -1119,13 +1149,40 @@ function validatePasswordFields(
   };
 }
 
-async function attachSession(res: Response, appEnv: AppEnv, userId: number) {
-  const sessionToken = await createSession(appEnv, userId);
+async function attachSession(
+  res: Response,
+  appEnv: AppEnv,
+  userId: number,
+  sessionConfig: SessionConfig = getPrimarySessionConfig(appEnv),
+) {
+  const sessionToken = await createSession(appEnv, userId, sessionConfig);
 
-  setCookie(res, appEnv.auth.sessionCookieName, sessionToken, {
+  setCookie(res, sessionConfig.cookieName, sessionToken, {
     path: "/",
-    maxAgeSeconds: appEnv.auth.sessionDurationDays * 24 * 60 * 60,
+    maxAgeSeconds: sessionConfig.durationDays * 24 * 60 * 60,
     httpOnly: true,
+    secure: appEnv.auth.cookieSecure,
+    sameSite: "lax",
+  });
+}
+
+async function clearSession(
+  res: Response,
+  appEnv: AppEnv,
+  req: Request,
+  sessionConfig: SessionConfig,
+) {
+  const sessionToken = readCookie(req, sessionConfig.cookieName);
+
+  if (sessionToken) {
+    await pool.execute(
+      `DELETE FROM ${sessionConfig.tableName} WHERE session_token_hash = ?`,
+      [sha256(sessionToken)],
+    );
+  }
+
+  clearCookie(res, sessionConfig.cookieName, {
+    path: "/",
     secure: appEnv.auth.cookieSecure,
     sameSite: "lax",
   });
@@ -1168,12 +1225,20 @@ export function createAuthRouter(appEnv: AppEnv): Router {
     }
 
     const storedState = readCookie(req, appEnv.auth.stateCookieName);
+    const vaultStoredState = readCookie(req, appEnv.auth.vaultStateCookieName);
+    const isPrimaryFlow = storedState === state;
+    const isVaultFlow = vaultStoredState === state;
 
-    if (!storedState || storedState !== state) {
+    if (!isPrimaryFlow && !isVaultFlow) {
       return res.status(400).send("Invalid OAuth state. Please try again.");
     }
 
     clearCookie(res, appEnv.auth.stateCookieName, {
+      path: "/auth/google",
+      secure: appEnv.auth.cookieSecure,
+      sameSite: "lax",
+    });
+    clearCookie(res, appEnv.auth.vaultStateCookieName, {
       path: "/auth/google",
       secure: appEnv.auth.cookieSecure,
       sameSite: "lax",
@@ -1186,11 +1251,47 @@ export function createAuthRouter(appEnv: AppEnv): Router {
       return res.status(403).send("Google account email is not verified.");
     }
 
+    if (isVaultFlow) {
+      const primaryUser = await findUserFromSession(appEnv, req);
+
+      if (!primaryUser) {
+        return sendAuthError(
+          res,
+          401,
+          "Please sign in to unlock the vault.",
+        );
+      }
+
+      if (normalizeEmail(profile.email) !== normalizeEmail(primaryUser.email)) {
+        return sendAuthError(
+          res,
+          403,
+          "Use the same Google account as your signed-in workspace account.",
+        );
+      }
+
+      await attachSession(
+        res,
+        appEnv,
+        primaryUser.id,
+        getVaultSessionConfig(appEnv),
+      );
+
+      return res.redirect(
+        new URL("/dashboard/vault", appEnv.auth.frontendUrl).toString(),
+      );
+    }
+
     const user = await upsertGoogleUser(profile);
 
     await attachSession(res, appEnv, user.id);
 
-    return res.redirect(new URL("/dashboard", appEnv.auth.frontendUrl).toString());
+    return res.redirect(
+      new URL(
+        isVaultFlow ? "/dashboard/vault" : "/dashboard",
+        appEnv.auth.frontendUrl,
+      ).toString(),
+    );
   });
 
   router.post("/signup", async (req, res) => {
@@ -1549,7 +1650,7 @@ export function createAuthRouter(appEnv: AppEnv): Router {
         );
       }
 
-      const user = await completePasswordReset(appEnv, res, pendingUser, password);
+      const user = await completePasswordReset(appEnv, res, req, pendingUser, password);
 
       return res.json({ user });
     } catch (error) {
@@ -1586,6 +1687,8 @@ export function createAuthRouter(appEnv: AppEnv): Router {
       sameSite: "lax",
     });
 
+    await clearSession(res, appEnv, req, getVaultSessionConfig(appEnv));
+
     clearPendingVerificationCookie(res, appEnv);
 
     return res.json({ ok: true });
@@ -1594,4 +1697,162 @@ export function createAuthRouter(appEnv: AppEnv): Router {
   return router;
 }
 
+export function createVaultAuthRouter(appEnv: AppEnv): Router {
+  const router = Router();
+  const sessionConfig = getVaultSessionConfig(appEnv);
+
+  async function requirePrimaryUser(
+    req: Request,
+    res: Response,
+  ): Promise<AuthUser | null> {
+    const primaryUser = await findUserFromSession(appEnv, req);
+
+    if (!primaryUser) {
+      sendAuthError(res, 401, "Please sign in to unlock the vault.");
+      return null;
+    }
+
+    return primaryUser;
+  }
+
+  router.get("/google", (_req, res) => {
+    if (!appEnv.auth.enabled) {
+      return res.status(503).send(authUnavailableMessage(appEnv));
+    }
+
+    const state = randomToken(24);
+
+    setCookie(res, appEnv.auth.vaultStateCookieName, state, {
+      path: "/auth/google",
+      maxAgeSeconds: 10 * 60,
+      httpOnly: true,
+      secure: appEnv.auth.cookieSecure,
+      sameSite: "lax",
+    });
+
+    return res.redirect(buildGoogleAuthUrl(appEnv, state));
+  });
+
+  router.get("/google/callback", async (req, res) => {
+    if (!appEnv.auth.enabled) {
+      return res.status(503).send(authUnavailableMessage(appEnv));
+    }
+
+    const { code, state, error } = req.query;
+
+    if (typeof error === "string") {
+      return res.status(400).send(`Google sign-in was cancelled: ${error}`);
+    }
+
+    if (typeof code !== "string" || typeof state !== "string") {
+      return res.status(400).send("Missing OAuth code or state.");
+    }
+
+    const storedState = readCookie(req, appEnv.auth.vaultStateCookieName);
+
+    if (!storedState || storedState !== state) {
+      return res.status(400).send("Invalid OAuth state. Please try again.");
+    }
+
+    clearCookie(res, appEnv.auth.vaultStateCookieName, {
+      path: "/auth/google",
+      secure: appEnv.auth.cookieSecure,
+      sameSite: "lax",
+    });
+
+    const tokenSet = await exchangeCodeForTokens(appEnv, code);
+    const profile = await fetchGoogleUserInfo(tokenSet.access_token);
+
+    if (!profile.email_verified) {
+      return res.status(403).send("Google account email is not verified.");
+    }
+
+    const primaryUser = await requirePrimaryUser(req, res);
+
+    if (!primaryUser) {
+      return;
+    }
+
+    if (normalizeEmail(profile.email) !== normalizeEmail(primaryUser.email)) {
+      return sendAuthError(
+        res,
+        403,
+        "Use the same Google account as your signed-in workspace account.",
+      );
+    }
+
+    await attachSession(res, appEnv, primaryUser.id, sessionConfig);
+
+    return res.redirect(
+      new URL("/dashboard/vault", appEnv.auth.frontendUrl).toString(),
+    );
+  });
+
+  router.post("/login", async (req, res) => {
+    try {
+      const primaryUser = await requirePrimaryUser(req, res);
+
+      if (!primaryUser) {
+        return;
+      }
+
+      const fields = validatePasswordFields(req.body ?? {}, false);
+
+      if (normalizeEmail(fields.email) !== normalizeEmail(primaryUser.email)) {
+        return sendAuthError(
+          res,
+          403,
+          "Use the same email as your signed-in workspace account.",
+        );
+      }
+
+      const user = await loginPasswordUser(primaryUser.email, fields.password);
+
+      await attachSession(res, appEnv, user.id, sessionConfig);
+
+      return res.json({
+        user: toAuthUser(user),
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to sign in.";
+
+      const status =
+        error instanceof Error &&
+        error.message === "Please verify your email before signing in."
+          ? 403
+          : 401;
+
+      return sendAuthError(res, status, message);
+    }
+  });
+
+  router.get("/me", async (req, res) => {
+    const primaryUser = await requirePrimaryUser(req, res);
+
+    if (!primaryUser) {
+      await clearSession(res, appEnv, req, sessionConfig);
+      return;
+    }
+
+    const user = await findUserFromSession(appEnv, req, sessionConfig);
+
+    if (!user || normalizeEmail(user.email) !== normalizeEmail(primaryUser.email)) {
+      await clearSession(res, appEnv, req, sessionConfig);
+      return res.status(401).json({ user: null });
+    }
+
+    return res.json({ user });
+  });
+
+  router.post("/logout", async (req, res) => {
+    await clearSession(res, appEnv, req, sessionConfig);
+
+    return res.json({ ok: true });
+  });
+
+  return router;
+}
+
 export const createGoogleAuthRouter = createAuthRouter;
+export const createVaultGoogleAuthRouter = createVaultAuthRouter;

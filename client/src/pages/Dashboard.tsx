@@ -92,7 +92,7 @@ export default function Dashboard() {
         />
 
         <div className="flex-1 overflow-y-auto scrollbar-none p-6">
-          <Outlet context={{ firstName }} />
+          <Outlet context={{ firstName, currentUser }} />
         </div>
       </main>
 

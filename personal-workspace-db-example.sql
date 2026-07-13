@@ -39,8 +39,54 @@ CREATE TABLE IF NOT EXISTS sessions (
     KEY idx_sessions_user_id (user_id),
     KEY idx_sessions_expires_at (expires_at),
     CONSTRAINT fk_sessions_user_id
-    FOREIGN KEY (user_id) REFERENCES users (id)
-    ON DELETE CASCADE
+        FOREIGN KEY (user_id) REFERENCES users (id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS vault_sessions (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED NOT NULL,
+    session_token_hash CHAR(64) NOT NULL,
+    expires_at DATETIME NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uniq_vault_sessions_token_hash (session_token_hash),
+    KEY idx_vault_sessions_user_id (user_id),
+    KEY idx_vault_sessions_expires_at (expires_at),
+    CONSTRAINT fk_vault_sessions_user_id
+        FOREIGN KEY (user_id) REFERENCES users (id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS vault_settings (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    setting_key VARCHAR(100) NOT NULL,
+    setting_value LONGTEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uniq_vault_settings_key (setting_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS vault_secrets (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED NOT NULL,
+    label VARCHAR(255) NOT NULL,
+    category VARCHAR(64) NOT NULL,
+    notes VARCHAR(255) NULL,
+    secret_ciphertext LONGTEXT NOT NULL,
+    secret_iv CHAR(24) NOT NULL,
+    secret_auth_tag CHAR(24) NOT NULL,
+    secret_key_version SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_vault_secrets_user_id (user_id),
+    KEY idx_vault_secrets_user_category (user_id, category),
+    KEY idx_vault_secrets_user_updated_at (user_id, updated_at),
+    CONSTRAINT fk_vault_secrets_user_id
+        FOREIGN KEY (user_id) REFERENCES users (id)
+        ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS bookmark_tags (
@@ -54,8 +100,8 @@ CREATE TABLE IF NOT EXISTS bookmark_tags (
     UNIQUE KEY uniq_bookmark_tags_user_slug (user_id, slug),
     KEY idx_bookmark_tags_user_id (user_id),
     CONSTRAINT fk_bookmark_tags_user_id
-    FOREIGN KEY (user_id) REFERENCES users (id)
-    ON DELETE CASCADE
+        FOREIGN KEY (user_id) REFERENCES users (id)
+        ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS bookmarks (
