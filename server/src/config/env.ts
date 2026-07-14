@@ -64,42 +64,6 @@ function getOptionalEnv(name: string): string | undefined {
   return value ? value : undefined;
 }
 
-function trimTrailingSlash(value: string): string {
-  return value.replace(/\/$/, "");
-}
-
-function getFrontendUrl(): string {
-  const frontendUrl = getOptionalEnv("FRONTEND_URL");
-
-  if (frontendUrl) {
-    return trimTrailingSlash(frontendUrl);
-  }
-
-  if (process.env.VERCEL) {
-    throw new Error(
-      "Missing required environment variable: FRONTEND_URL. Set it to your deployed client URL in Vercel.",
-    );
-  }
-
-  return "http://localhost:5173";
-}
-
-function getGoogleRedirectUri(): string | undefined {
-  const googleRedirectUri = getOptionalEnv("GOOGLE_REDIRECT_URI");
-
-  if (googleRedirectUri) {
-    return trimTrailingSlash(googleRedirectUri);
-  }
-
-  const vercelUrl = getOptionalEnv("VERCEL_URL");
-
-  if (vercelUrl) {
-    return `https://${trimTrailingSlash(vercelUrl)}/auth/google/callback`;
-  }
-
-  return undefined;
-}
-
 function parsePort(value: string | undefined, fallback: number): number {
   if (!value) {
     return fallback;
@@ -194,10 +158,14 @@ function buildSslConfig(): SslConfig | undefined {
 }
 
 export function getAppEnv(): AppEnv {
-  const frontendUrl = getFrontendUrl();
+  const frontendUrl =
+    (getOptionalEnv("FRONTEND_URL") ?? "http://localhost:5173").replace(
+      /\/$/,
+      "",
+    );
   const googleClientId = getOptionalEnv("GOOGLE_CLIENT_ID");
   const googleClientSecret = getOptionalEnv("GOOGLE_CLIENT_SECRET");
-  const googleRedirectUri = getGoogleRedirectUri();
+  const googleRedirectUri = getOptionalEnv("GOOGLE_REDIRECT_URI");
   const mailApiKey = getOptionalEnv("BREVO_API_KEY");
   const mailFromEmail = getOptionalEnv("BREVO_FROM_EMAIL");
 
