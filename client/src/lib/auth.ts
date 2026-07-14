@@ -59,7 +59,21 @@ type CurrentUserResponse =
       user: null;
     };
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "";
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "");
+
+function getApiBaseUrl(): string {
+  if (apiBaseUrl) {
+    return apiBaseUrl;
+  }
+
+  if (import.meta.env.DEV) {
+    return "";
+  }
+
+  throw new Error(
+    "Missing VITE_API_BASE_URL. Set it in your Vercel client project to the deployed server URL.",
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -68,7 +82,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function buildApiUrl(path: string): string {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
 
-  return `${apiBaseUrl}${normalizedPath}`;
+  return `${getApiBaseUrl()}${normalizedPath}`;
 }
 
 export function startGoogleAuth() {
