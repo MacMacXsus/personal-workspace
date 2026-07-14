@@ -8,7 +8,6 @@ This template provides a minimal setup to get React working in Vite with HMR and
 - Use `npm run build` as the build command
 - Keep the output directory as `dist`
 - Set `VITE_API_BASE_URL` in Vercel to your deployed backend URL
-- If `VITE_API_BASE_URL` is missing in production, auth requests will fail fast instead of quietly hitting the wrong origin
 - The `client/vercel.json` rewrite keeps routes like `/login` working on refresh or direct entry
 
 Currently, two official plugins are available:
